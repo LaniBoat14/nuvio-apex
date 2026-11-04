@@ -1,5 +1,13 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.core.player.BufferAhead
+
+import com.nuvio.tv.core.player.BufferBudgetControl
+
+import com.nuvio.tv.core.player.BufferTopUp
+
+import com.nuvio.tv.core.player.BufferSizing
+
 import android.content.Context
 import android.content.res.Resources
 import android.graphics.RectF
@@ -8,6 +16,7 @@ import android.media.audiofx.LoudnessEnhancer
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.CaptioningManager
@@ -33,6 +42,8 @@ import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
 import androidx.media3.exoplayer.audio.AudioCapabilities
 import androidx.media3.exoplayer.audio.AudioSink
+import com.nuvio.tv.core.player.AudioPassthroughPolicy
+import com.nuvio.tv.ui.screens.player.iec.IecPassthroughAudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
 import androidx.media3.exoplayer.mediacodec.MediaCodecAdapter
@@ -178,6 +189,9 @@ internal fun PlayerRuntimeController.initializePlayer(
     }
     mpvMediaLoadPrepared = false
     val afrPreflightToken = afrPreflightGate.token()
+    playbackRecoveryJob?.cancel()
+    playbackRecoveryJob = null
+    playbackRecoveryGate.begin(url, headers)
 
     scope.launch {
         try {
@@ -216,11 +230,15 @@ internal fun PlayerRuntimeController.initializePlayer(
             currentBitrateAwareLoadControl = null
             configuredBackBufferMs = 0
 
+            // Fresh stream, fresh output-mode state; the audio-path listener re-derives it at AudioTrack init.
+            isAudioOutputBypassing = false
+            AudioRejectionReverifier.ledger.restoreEvidence(playerSettingsDataStore.audioRefusalEvidence())
             val playerSettings = playerSettingsDataStore.playerSettings.first()
             currentPlayerSettingsForReport = playerSettings
             rememberAudioDelayPerDeviceEnabled = playerSettings.rememberAudioDelayPerDevice
             // Always watch output-device changes so Bluetooth connect/disconnect can switch
             // PCM/passthrough policy in place (Media3 1.8.0 BT semantics; do not rebuild).
+            rearmOutputChecksForNewPlayer()
             registerAudioDelayRouteCallback()
             currentAudioOutputRoute = AudioOutputRouteDetector.detect(context)
             tunnelingBlockedByUsbAudio = playerSettings.effectiveTunnelingEnabled &&
@@ -234,6 +252,13 @@ internal fun PlayerRuntimeController.initializePlayer(
             val tunnelingActive = playerSettings.effectiveTunnelingEnabled && !tunnelingBlockedByUsbAudio
             if (rememberAudioDelayPerDeviceEnabled) {
                 applyStoredAudioDelayForCurrentRouteIfEnabled()
+            }
+            currentAudioOutputRoute?.let { route ->
+                if (!route.isBluetooth && _exoPlayer == null) {
+                    AudioRejectionReverifier.start(route.key, playerSettings.audioRejectionsConfirmed) { entry ->
+                        scope.launch { playerSettingsDataStore.clearAudioRejection(entry) }
+                    }
+                }
             }
             // Re-apply on every (re)initialization without dropping the user's tweak on the current stream.
             applyEffectiveAudioDelay()
@@ -346,8 +371,12 @@ internal fun PlayerRuntimeController.initializePlayer(
             // The persisted enum stays as-is; only the runtime behavior is derived per playback.
             var effectiveDv7Mode: Dv7HandlingMode
             val dv7AutoResult: DolbyVisionBaseLayerPolicy.Result?
-            when (playerSettings.dv7HandlingMode) {
-                Dv7HandlingMode.AUTO -> {
+            // NATIVE_FEL (Arc's Amlogic dual-layer path) is not ported to Flow: it resolves
+            // exactly like AUTO.
+            val autoLikeDv7Mode = playerSettings.dv7HandlingMode == Dv7HandlingMode.AUTO ||
+                playerSettings.dv7HandlingMode == Dv7HandlingMode.NATIVE_FEL
+            when {
+                autoLikeDv7Mode -> {
                     val result = DolbyVisionBaseLayerPolicy.resolve(
                         context = context,
                         bridgeReady = DoviBridge.isLibraryLoaded
@@ -367,6 +396,8 @@ internal fun PlayerRuntimeController.initializePlayer(
                                 "displayHdr10=${result.displayHdr10} " +
                                 "displayHdr10Plus=${result.displayHdr10Plus} " +
                                 "codecDvheDtb=${result.codecSupportsDvheDtb} " +
+                                "codecDvheSt=${result.codecSupportsDvheSt} " +
+                                "manualConversion=${result.usesManualConversion} " +
                                 "bridgeReady=${result.bridgeReady} " +
                                 "api=${result.apiLevel} " +
                                 "host=${url.safeHost()}"
@@ -402,7 +433,8 @@ internal fun PlayerRuntimeController.initializePlayer(
                     Dv7HandlingMode.HDR10_BASE_LAYER -> "hdr10-base-layer-mode"
                     Dv7HandlingMode.STRIP_DV -> "strip-dv-mode"
                     Dv7HandlingMode.OFF -> "dv7-mode-off"
-                    Dv7HandlingMode.AUTO -> "auto-mode-no-dv81"  // unreachable; AUTO is collapsed above
+                    Dv7HandlingMode.AUTO,
+                    Dv7HandlingMode.NATIVE_FEL -> "auto-mode-no-dv81"  // unreachable; AUTO is collapsed above
                     Dv7HandlingMode.DV81_LIBDOVI -> "setting-disabled"  // unreachable
                 }
                 DoviBridge.RealtimeConversionProbe(
@@ -422,7 +454,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                 dv7ToDv81SettingActive && dv7ToDv81Probe.supported && !dv7ConversionDisarmedForUrl
             // AUTO fallback: if AUTO chose DV81 but the probe failed for this stream,
             // downgrade to HDR10_BASE_LAYER so the user still gets a picture.
-            if (playerSettings.dv7HandlingMode == Dv7HandlingMode.AUTO &&
+            if (autoLikeDv7Mode &&
                 effectiveDv7Mode == Dv7HandlingMode.DV81_LIBDOVI &&
                 !dv7ToDv81Probe.supported
             ) {
@@ -746,6 +778,19 @@ internal fun PlayerRuntimeController.initializePlayer(
                         streamMime.lowercase().contains("m3u8")
                     )
                     Log.d("NuvioTrackSelector", "selectAllTracks run: streamMime=$streamMime, isHls=$isHls")
+                    promotePassthroughAudioWhenRendererAlive(
+                        mappedTrackInfo,
+                        rendererFormatSupports,
+                        passthroughPolicy = currentAudioPassthroughPolicy,
+                        audioSink = playbackSpeedAwareAudioSink
+                    )
+                    demoteAudioTunnelingWhereItCannotBeClocked(
+                        mappedTrackInfo,
+                        rendererFormatSupports,
+                        ffmpegRendererName = ffmpegAudioRenderer?.name,
+                        audioSink = playbackSpeedAwareAudioSink,
+                        deadClockAudioClasses = PlayerTunnelAvSyncPolicy.deadAudioClasses
+                    )
                     if (isHls) {
                         for (rendererIndex in 0 until mappedTrackInfo.rendererCount) {
                             if (mappedTrackInfo.getRendererType(rendererIndex) == C.TRACK_TYPE_VIDEO) {
@@ -832,6 +877,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                 }
             }.apply {
                 setParameters(buildUponParameters().setAllowInvalidateSelectionsOnRendererCapabilitiesChange(true))
+                isTunnelingActiveForCurrentPlayback = tunnelingActive && !safeAudioModeEnabled
                 if (tunnelingActive && !safeAudioModeEnabled) {
                     setParameters(buildUponParameters().setTunnelingEnabled(true))
                 } else if (safeAudioModeEnabled) {
@@ -892,12 +938,14 @@ internal fun PlayerRuntimeController.initializePlayer(
                 .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS)
                 .setTsExtractorTimestampSearchBytes(1500 * TsExtractor.TS_PACKET_SIZE)
 
-            // Manual Convert-to-DV8.1 uses mode 2; if a prior attempt at this stream
-            // failed to play, force mode 1 this time (before the HDR10 fallback).
+            // Manual Convert-to-DV8.1, and Auto on a device it converts the same way, use mode 2;
+            // if a prior attempt at this stream failed to play, force mode 1 this time (before the
+            // HDR10 fallback).
             val dv7Mode1Forced = dv7Mode1ForcedStreamUrls.contains(url)
             val manualDv81Selected = playerSettings.dv7HandlingMode == Dv7HandlingMode.DV81_LIBDOVI
+            val autoDv81Mode2 = autoLikeDv7Mode && dv7AutoResult?.usesManualConversion == true
             isManualDv81Mode2ActiveForCurrentPlayback =
-                manualDv81Selected &&
+                (manualDv81Selected || autoDv81Mode2) &&
                 effectiveDv7Mode == Dv7HandlingMode.DV81_LIBDOVI &&
                 !libdoviModeOverrideActive &&
                 !dv7Mode1Forced
@@ -916,17 +964,22 @@ internal fun PlayerRuntimeController.initializePlayer(
             // OR the error handler's per-stream override (preserved for retry-after-failure).
             val mapDv7ToHevcEnabled = effectiveDv7Mode == Dv7HandlingMode.HDR10_BASE_LAYER ||
                     dv7ToHevcForcedStreamUrls.contains(url)
-            val isHdr10BaseLayerModeActive = when (playerSettings.dv7HandlingMode) {
-                Dv7HandlingMode.AUTO -> dv7AutoResult?.displayDv != true
+            val isHdr10BaseLayerModeActive = when {
+                autoLikeDv7Mode -> dv7AutoResult?.displayDv != true
                 else -> effectiveDv7Mode == Dv7HandlingMode.HDR10_BASE_LAYER ||
                         effectiveDv7Mode == Dv7HandlingMode.STRIP_DV
             }
             com.nuvio.tv.core.player.dvmkv.DolbyVisionCompatibility.setHdr10BaseLayerModeActive(isHdr10BaseLayerModeActive)
             isMapDv7ToHevcActiveForCurrentPlayback = mapDv7ToHevcEnabled
+            // Key this off the effective mode, not the AUTO policy result: dv7AutoResult is null
+            // in every manual mode, so gating on it would withhold the hidden-DV-decoder fallback
+            // from users who manually select Convert-to-DV8.1. effectiveDv7Mode already
+            // collapses AUTO to DV81_LIBDOVI when the policy chose convert.
             val convertToDv81Active = !mapDv7ToHevcEnabled &&
-                    dv7AutoResult?.decision == DolbyVisionBaseLayerPolicy.Decision.CONVERT_TO_DV81
+                    effectiveDv7Mode == Dv7HandlingMode.DV81_LIBDOVI
             val codecSelector = createDolbyVisionFallbackCodecSelector(convertToDv81Active = convertToDv81Active)
             scope.launch(kotlinx.coroutines.Dispatchers.Default) { softwareOnlyDecoderNames }
+            val preferFfmpegAudioActive = preferFfmpegAudioStreamUrls.contains(url)
             // Bluetooth media sink (A2DP / LE Audio): Media3 only advertises PCM. Do not attempt
             // optical/HDMI passthrough — decode to PCM and let the BT stack encode SBC/AAC/aptX/LDAC.
             val isBluetoothAudioOutput = currentAudioOutputRoute?.isBluetooth == true ||
@@ -935,14 +988,17 @@ internal fun PlayerRuntimeController.initializePlayer(
             val isForcePassthroughActive = !isBluetoothAudioOutput &&
                 playerSettings.forceOpticalPassthrough &&
                 playerSettings.decoderPriority != 0
-            // Prefer FFmpeg/extension audio decoder on BT so multi-channel TrueHD/DTS always
-            // decode to stereo PCM even when the platform MediaCodec path is flaky.
-            val effectiveDecoderPriority = if (
-                hasTriedAudioPcmFallback ||
-                isForcePassthroughActive ||
-                isBluetoothAudioOutput
-            ) {
+            val dtsHdTvPassthroughActive = playerSettings.dtsHdTvPassthrough &&
+                !isBluetoothAudioOutput &&
+                TvArcAudioOutput.isActive(context)
+            // Force-AC3 does not escalate the *global* extension mode to PREFER (that would put
+            // software AV1 video decode ahead of MediaCodec). The FFmpeg audio renderer is instead
+            // reordered audio-locally in buildAudioRenderers. Bluetooth keeps PREFER so multi-channel
+            // TrueHD/DTS always decode to stereo PCM even when the platform MediaCodec path is flaky.
+            val effectiveDecoderPriority = if (hasTriedAudioPcmFallback || isBluetoothAudioOutput) {
                 DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+            } else if (isForcePassthroughActive) {
+                maxOf(playerSettings.decoderPriority, DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
             } else {
                 playerSettings.decoderPriority
             }
@@ -963,8 +1019,73 @@ internal fun PlayerRuntimeController.initializePlayer(
                 )
             }
 
+            // ── Surround resolution: which formats the sink may pass through for this output ──
+            val currentRouteKey = currentAudioOutputRoute?.key
+            // A distinct token is consumed once per profile, including across process restarts.
+            val clearLearnedAudioRejections = playerSettingsDataStore.consumeAudioRejectionReset(
+                audioSystemProperty("debug.nuvio.clear_audio_rejections").orEmpty()
+            )
+            val surroundSettings = if (clearLearnedAudioRejections) {
+                Log.i(PlayerRuntimeController.TAG, "Learned audio rejections reset")
+                playerSettings.copy(audioRejectionsSeen = emptySet(), audioRejectionsConfirmed = emptySet())
+                    .also { currentPlayerSettingsForReport = it }
+            } else {
+                playerSettings
+            }
+            val softwareDecodersAvailable =
+                effectiveDecoderPriority != DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
+            val surroundInputs = SurroundResolveInputs(
+                routeKey = currentRouteKey,
+                isBluetooth = isBluetoothAudioOutput,
+                softwareDecodersAvailable = softwareDecodersAvailable,
+                forceOpticalActive = isForcePassthroughActive,
+                effectiveDownmixEnabled = effectiveDownmixEnabled,
+                effectiveAudioOutputChannels = effectiveAudioOutputChannels
+            )
+            surroundResolveInputs = surroundInputs
+            val surround = resolveSurroundForRoute(context, surroundSettings, surroundInputs)
+            val surroundResolution = surround.resolution
+            val surroundTargetChannels = surround.targetChannels
+            val surroundDownmixEnabled = surround.downmixEnabled
+            val surroundAudioOutputChannels = surround.audioOutputChannels
+            if (!surroundResolution.policy.allowsEverything() || surroundTargetChannels != null) {
+                Log.i(
+                    PlayerRuntimeController.TAG,
+                    "SURROUND_RESOLVE: route=$currentRouteKey policy=[ac3=${surroundResolution.policy.allowAc3} " +
+                        "eac3=${surroundResolution.policy.allowEac3} truehd=${surroundResolution.policy.allowTrueHd} " +
+                        "dts=${surroundResolution.policy.allowDts} dtshd=${surroundResolution.policy.allowDtsHd} " +
+                        "learned=${surroundResolution.policy.learnedDeniedGroups}] " +
+                        "transcodePreferred=${surroundResolution.transcodePreferred} " +
+                        "channelTarget=$surroundTargetChannels tvArcSoundbar=${surroundSettings.surroundTvArcSoundbar}"
+                )
+                queuePlaybackRawEventLine(
+                    "surround_resolve route=$currentRouteKey " +
+                        "ac3=${surroundResolution.policy.allowAc3} eac3=${surroundResolution.policy.allowEac3} " +
+                        "truehd=${surroundResolution.policy.allowTrueHd} dts=${surroundResolution.policy.allowDts} " +
+                        "dtshd=${surroundResolution.policy.allowDtsHd} transcodePreferred=${surroundResolution.transcodePreferred} " +
+                        "channelTarget=$surroundTargetChannels tvArcSoundbar=${surroundSettings.surroundTvArcSoundbar}"
+                )
+            }
+            if (SpeakerlessBoxRoute.hdmiSoundOff(currentRouteKey)) logHdmiSoundOff("start", currentRouteKey)
+            currentAudioPassthroughPolicy = surroundResolution.policy
+            lastAppliedSurroundResolve = surround
+            lastAppliedSurroundHdmi = AudioChainProbe.hdmiPlugSnapshot(context)
+
+            val deniedTranscodeMimes = surround.deniedTranscodeMimes
+            if (deniedTranscodeMimes.isNotEmpty()) {
+                Log.i(
+                    PlayerRuntimeController.TAG,
+                    "SURROUND_TRANSCODE: route=$currentRouteKey mimes=$deniedTranscodeMimes"
+                )
+                queuePlaybackRawEventLine(
+                    "surround_transcode route=$currentRouteKey " +
+                        "mimes=${deniedTranscodeMimes.joinToString(",")}"
+                )
+            }
+
             // ── Renderers Factory (Combining Libass offsets + Audio Gain + Video Fallback) ──
             val renderersFactory = SubtitleOffsetRenderersFactory(
+                audioPassthroughPolicy = surroundResolution.policy,
                 context = context,
                 subtitleDelayUsProvider = { subtitleDelayUs.get() + streamSubtitleDelayUs.get() },
                 audioDelayUsProvider = audioDelayUs::get,
@@ -984,25 +1105,33 @@ internal fun PlayerRuntimeController.initializePlayer(
                 },
                 gainAudioProcessor = gainAudioProcessor,
                 nightModeAudioProcessor = nightModeAudioProcessor,
-                downmixEnabled = effectiveDownmixEnabled,
-                audioOutputChannels = effectiveAudioOutputChannels,
+                downmixEnabled = surroundDownmixEnabled,
+                audioOutputChannels = surroundAudioOutputChannels,
                 downmixNormalizationEnabled = !playerSettings.maintainOriginalAudioOnDownmix,
-                downmixLfeLevel = playerSettings.downmixLfeLevel.level,
                 forceOpticalPassthrough = isForcePassthroughActive,
+                useSystemPassthrough = playerSettings.useSystemPassthrough,
+                dtsHdTvPassthrough = dtsHdTvPassthroughActive,
+                iecOff = iecOffStreamUrls.contains(url),
+                onIecFailed = {
+                    Handler(Looper.getMainLooper()).post { onOwnIecOutputFailed() }
+                },
+                deniedTranscodeMimes = deniedTranscodeMimes,
+                preferFfmpegAudio = preferFfmpegAudioActive,
                 bluetoothForcePcm = isBluetoothAudioOutput,
                 playbackSpeedProvider = { _uiState.value.playbackSpeed },
                 initialForcePcm = hasTriedAudioPcmFallback || isBluetoothAudioOutput,
                 preferSoftwareAudioOnly = isBluetoothAudioOutput,
                 mapDv7ToHevc = mapDv7ToHevcEnabled,
                 onPlaybackSpeedAwareAudioSinkCreated = { playbackSpeedAwareAudioSink = it },
+                onAudioDiagnosticEvent = { line -> queuePlaybackRawEventLine(line) },
                 onFfmpegAudioRendererChanged = { renderer ->
                     ffmpegAudioRenderer = renderer
                     renderer?.applyDownmixSettings(
-                        downmixEnabled = effectiveDownmixEnabled,
-                        audioOutputChannels = effectiveAudioOutputChannels,
+                        downmixEnabled = surroundDownmixEnabled,
+                        audioOutputChannels = surroundAudioOutputChannels,
                         downmixNormalizationEnabled = !playerSettings.maintainOriginalAudioOnDownmix,
-                        lfeMixLevel = playerSettings.downmixLfeLevel.level,
-                        forceOpticalPassthrough = isForcePassthroughActive
+                        forceOpticalPassthrough = isForcePassthroughActive,
+                        deniedTranscodeMimes = deniedTranscodeMimes
                     )
                     applyCenterMixLevel(_uiState.value.centerMixLevelDb)
                     updateAudioControlAvailability()
@@ -1039,13 +1168,13 @@ internal fun PlayerRuntimeController.initializePlayer(
                                 dv7Mode1Forced -> 1
                                 else -> -1
                             },
-                            preserveMapping = playerSettings.dv7ToDv81PreserveMappingEnabled &&
-                                    manualDv81Selected,
                             dv5Enabled = playerSettings.dv5ToDv81Enabled,
-                            manualDv81 = manualDv81Selected && !dv7Mode1Forced
+                            manualDv81 = manualDv81Selected && !dv7Mode1Forced,
+                            autoMode2 = autoDv81Mode2 && !dv7Mode1Forced
                         ),
                         stripDvRpu = stripDvRpuEnabled,
-                        stripHdr10PlusSei = stripHdr10PlusSei
+                        stripHdr10PlusSei = stripHdr10PlusSei,
+                        injectHdr10Sei = playerSettings.injectHdr10MetadataOnStrip
                     ).let { autoSyncExtractorsFactory(it, url, headers) } // AutoSync hook
 
             setLoadingStatus(
@@ -1586,6 +1715,12 @@ internal fun PlayerRuntimeController.initializePlayer(
                             return
                         }
 
+                        // The same-configuration retry runs first: a refusal it cures is never
+                        // learned as a denial.
+                        val audioRetryScheduled = tryBitstreamAudioTrackSameConfigRetry(error)
+                        noteAudioTrackRejection(error, audioRetryScheduled)
+                        if (audioRetryScheduled) return
+
                         // Error handlers: DV codec failures, audio decoder issues, codec state errors.
                         if (error.isDolbyVisionDecoderFailure() && !isMapDv7ToHevcActiveForCurrentPlayback) {
                             // Manual Convert-to-DV8.1 mode 2 failed to decode: try
@@ -1620,7 +1755,9 @@ internal fun PlayerRuntimeController.initializePlayer(
                         // fallback ladder as a DV decoder failure instead of burning the
                         // audio fallbacks (safe-audio/audio-disabled) on it — they rebuild
                         // the player with the same broken conversion and fail identically.
+                        val audioOutputRuntimeFailure = error.isAudioOutputRuntimeFailure()
                         if (error.errorCode == PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK &&
+                            !audioOutputRuntimeFailure &&
                             (isExperimentalDv7ToDv81ActiveForCurrentPlayback ||
                                 isManualDv81Mode2ActiveForCurrentPlayback) &&
                             !isMapDv7ToHevcActiveForCurrentPlayback
@@ -1655,6 +1792,16 @@ internal fun PlayerRuntimeController.initializePlayer(
                             return
                         }
 
+                        if (iecOffRungApplies(
+                                audioPathFailure = audioOutputRuntimeFailure || error.isAudioTrackFailure(),
+                                iecInvolved = playbackSpeedAwareAudioSink?.iecInvolved() == true,
+                                failingMimeType = error.failingAudioMimeType()
+                            )
+                        ) {
+                            retryCurrentStreamWithoutIec(currentPosition)
+                            return
+                        }
+
                         if ((error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED ||
                              error.errorCode == PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK) &&
                             !autoSwitchInternalPlayerOnErrorEnabled) {
@@ -1671,6 +1818,13 @@ internal fun PlayerRuntimeController.initializePlayer(
 
                         // AudioTrack init (5001) / write (5002): try a light PCM rebuild first,
                         // then the heavier safe-audio / disable-audio path below.
+                        // 4001 on a policy-denied audio format (hybrid MIME upgraded mid-stream past the
+                        // selection-time abdication): rebuild with FFmpeg audio preferred so the whole
+                        // family maps to the renderer that can decode it.
+                        if (tryDeniedAudioFfmpegFallback(error)) {
+                            return
+                        }
+
                         if (tryAudioTrackPcmFallback(error)) {
                             return
                         }
@@ -1782,6 +1936,74 @@ internal fun PlayerRuntimeController.initializePlayer(
                 })
 
                 addAnalyticsListener(object : AnalyticsListener {
+                    override fun onAudioTrackInitialized(
+                        eventTime: AnalyticsListener.EventTime,
+                        audioTrackConfig: AudioSink.AudioTrackConfig
+                    ) {
+                        recordStashedAudioRejection(audioTrackConfig.encoding)
+                        // Records whether audio is passed through, decoded to PCM, or transcoded.
+                        val sourceMime = this@apply.audioFormat?.sampleMimeType
+                        val sourceCodec = describeAudioMime(sourceMime)
+                        // The only transcode this app performs is x -> AC-3 (denied-codec handling /
+                        // Force AC-3); name it rather than calling it plain passthrough.
+                        val sinkPath = if (
+                            audioTrackConfig.encoding == C.ENCODING_AC3 &&
+                            sourceMime != null &&
+                            sourceMime != MimeTypes.AUDIO_AC3
+                        ) {
+                            "AC-3 transcode"
+                        } else {
+                            describeAudioEncoding(audioTrackConfig.encoding)
+                        }
+                        val detail = buildString {
+                            append(sinkPath)
+                            append(" (")
+                            append(audioTrackConfig.sampleRate / 1000)
+                            append(" kHz")
+                            val ch = Integer.bitCount(audioTrackConfig.channelConfig)
+                            if (ch > 0) append(", ${ch}ch")
+                            if (audioTrackConfig.tunneling) append(", tunneled")
+                            if (audioTrackConfig.offload) append(", offload")
+                            append(')')
+                        }
+                        currentAudioPathDescription = "$sourceCodec \u2192 $detail"
+                        if (_exoPlayer === this@apply) logAudioStart(this@apply, audioTrackConfig, "$sourceCodec \u2192 $detail")
+                        if (_exoPlayer === this@apply) {
+                            val openedGroup = passthroughGroupOfEncoding(audioTrackConfig.encoding)
+                            playbackRecoveryGate.noteAudioOutputOpened(openedGroup)
+                            if (openedGroup != null) {
+                                com.nuvio.tv.ui.screens.player.iec.LiveDirectAudioPlayback.noteOwnTrackOpened()
+                                currentAudioOutputRoute?.key?.let {
+                                    if (AudioRejectionReverifier.ledger.noteBitstreamOpened(it)) saveAudioRefusalEvidence()
+                                }
+                            }
+                        }
+                        val bypassing = when (audioTrackConfig.encoding) {
+                            C.ENCODING_PCM_16BIT,
+                            C.ENCODING_PCM_16BIT_BIG_ENDIAN,
+                            C.ENCODING_PCM_24BIT,
+                            C.ENCODING_PCM_24BIT_BIG_ENDIAN,
+                            C.ENCODING_PCM_32BIT,
+                            C.ENCODING_PCM_32BIT_BIG_ENDIAN,
+                            C.ENCODING_PCM_8BIT,
+                            C.ENCODING_PCM_FLOAT -> false
+                            else -> true
+                        }
+                        if (bypassing != isAudioOutputBypassing) {
+                            isAudioOutputBypassing = bypassing
+                            updateAudioControlAvailability()
+                        }
+                    }
+
+                    override fun onAudioTrackReleased(
+                        eventTime: AnalyticsListener.EventTime,
+                        audioTrackConfig: AudioSink.AudioTrackConfig
+                    ) {
+                        if (passthroughGroupOfEncoding(audioTrackConfig.encoding) != null) {
+                            com.nuvio.tv.ui.screens.player.iec.LiveDirectAudioPlayback.noteOwnTrackClosed()
+                        }
+                    }
+
                     override fun onPlaybackStateChanged(eventTime: AnalyticsListener.EventTime, state: Int) {
                         playbackAnalyticsDiagnostics.onPlaybackStateChanged(eventTime, state)
                     }
@@ -1796,6 +2018,16 @@ internal fun PlayerRuntimeController.initializePlayer(
 
                     override fun onIsPlayingChanged(eventTime: AnalyticsListener.EventTime, isPlaying: Boolean) {
                         playbackAnalyticsDiagnostics.onIsPlayingChanged(eventTime, isPlaying)
+                        if (isPlaying && _exoPlayer === this@apply && playbackSpeedAwareAudioSink?.isIecHbrActive() == true) {
+                            playbackRecoveryGate.noteAudioOutputOpened(
+                                AudioPassthroughPolicy.groupOf(
+                                    playbackSpeedAwareAudioSink?.activeInputFormat?.sampleMimeType
+                                )
+                            )
+                            currentAudioOutputRoute?.key?.let {
+                                if (AudioRejectionReverifier.ledger.noteBitstreamOpened(it)) saveAudioRefusalEvidence()
+                            }
+                        }
                     }
 
                     override fun onIsLoadingChanged(eventTime: AnalyticsListener.EventTime, isLoading: Boolean) {
@@ -2233,6 +2465,7 @@ internal fun PlayerRuntimeController.resetLoadingOverlayForNewStream() {
 private const val SEEK_SOURCE_SETTLE_MS = 800L
 
 private class SubtitleOffsetRenderersFactory(
+    private val audioPassthroughPolicy: AudioPassthroughPolicy,
     context: Context,
     private val subtitleDelayUsProvider: () -> Long,
     private val audioDelayUsProvider: () -> Long,
@@ -2246,8 +2479,13 @@ private class SubtitleOffsetRenderersFactory(
     private val downmixEnabled: Boolean,
     private val audioOutputChannels: com.nuvio.tv.data.local.AudioOutputChannels,
     private val downmixNormalizationEnabled: Boolean,
-    private val downmixLfeLevel: Float,
     private val forceOpticalPassthrough: Boolean,
+    private val useSystemPassthrough: Boolean,
+    private val dtsHdTvPassthrough: Boolean = false,
+    private val iecOff: Boolean = false,
+    private val onIecFailed: (() -> Unit)? = null,
+    private val deniedTranscodeMimes: Set<String>,
+    private val preferFfmpegAudio: Boolean = false,
     private val bluetoothForcePcm: Boolean = false,
     private val playbackSpeedProvider: () -> Float,
     private val initialForcePcm: Boolean = false,
@@ -2258,6 +2496,7 @@ private class SubtitleOffsetRenderersFactory(
     private val preferSoftwareAudioOnly: Boolean = false,
     private val mapDv7ToHevc: Boolean = false,
     private val onPlaybackSpeedAwareAudioSinkCreated: (PlaybackSpeedAwareAudioSink) -> Unit,
+    private val onAudioDiagnosticEvent: ((String) -> Unit)? = null,
     private val onFfmpegAudioRendererChanged: (FfmpegAudioRenderer?) -> Unit,
     private val onCuesShown: (List<Cue>) -> Unit = {}
 ) : DefaultRenderersFactory(context) {
@@ -2314,27 +2553,94 @@ private class SubtitleOffsetRenderersFactory(
     ): AudioSink {
         // Bluetooth: pin Media3-equivalent DEFAULT (PCM-only) so TV HDMI profiles / force-optical
         // cannot advertise AC3/DTS passthrough while audio is routed to A2DP.
-        // Non-BT optical: pin expanded capabilities. Otherwise keep live Builder(context).
-        val builder = when {
+        // Otherwise, on Android TV, pin audio capabilities: build the sink WITHOUT a Context so
+        // media3 does NOT install a live AudioCapabilitiesReceiver. On the context
+        // path, any audio-device change (e.g. a Bluetooth remote idling for battery,
+        // then reinitialising) makes media3 re-query capabilities mid-playback; if
+        // the HAL transiently omits the passthrough encoding, DefaultAudioSink
+        // renegotiates and drops Atmos/TrueHD/DTS-HD to PCM. VLC avoids this by not
+        // subscribing to those events. We probe once (with the MEDIA/MOVIE
+        // attributes playback uses) and pin.
+        // On phones/tablets, keep the live receiver: headphone/Bluetooth/routing
+        // changes are common there and must be handled dynamically.
+        // TRADE-OFF (TV): capabilities fixed at build time, no adaptation if the
+        // output genuinely changes mid-playback; a cold AVR/soundbar wake-up may be
+        // probed before it reports passthrough (recovers on next play). A Bluetooth
+        // route flip IS handled: the route callback rebuilds the player, landing in
+        // the bluetoothForcePcm branch here.
+        val isTelevision =
+            context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
+        var pinnedOutputEncodings: Set<Int>? = null
+        val builder = (when {
             bluetoothForcePcm -> {
                 DefaultAudioSink.Builder()
                     .setAudioCapabilities(AudioOutputRouteDetector.bluetoothPcmOnlyCapabilities())
             }
-            forceOpticalPassthrough -> {
-                DefaultAudioSink.Builder(context)
-                    .setAudioCapabilities(buildStableAudioCapabilities(context, true))
+            isTelevision -> {
+                val pinned = PassthroughOutputReturn.capabilities(context)
+                pinnedOutputEncodings = PassthroughOutputReturn.encodingsOf(pinned)
+                DefaultAudioSink.Builder()
+                    .setAudioCapabilities(pinned)
             }
             else -> DefaultAudioSink.Builder(context)
-        }
+        })
             .setEnableFloatOutput(enableFloatOutput)
             .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
             .setAudioProcessors(arrayOf(gainAudioProcessor, nightModeAudioProcessor))
+            .setAudioTrackBufferSizeProvider(cappedPassthroughBufferSizeProvider)
         val baseAudioSink = builder.build()
-        val playbackSpeedAwareAudioSink = PlaybackSpeedAwareAudioSink(
+        // Read-only capability snapshot for the diagnostics page. Never opens an
+        // AudioTrack - startup IEC61937 activity is a wedge risk on some HALs.
+        AudioCapabilityReport.capture(context)
+        // Diagnostic harness: arm with
+        //   adb shell settings put global nuvio_fault_reject_mime audio/vnd.dts.hd
+        // disarm with `settings delete global nuvio_fault_reject_mime`. Read at build
+        // time, so arm it before starting playback. Inert when the setting is absent.
+        val faultInjectRejectMime = runCatching {
+            android.provider.Settings.Global.getString(context.contentResolver, "nuvio_fault_reject_mime")
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+        if (faultInjectRejectMime != null) {
+            Log.w(PlayerRuntimeController.TAG, "FAULT_INJECT armed: passthrough for $faultInjectRejectMime will be refused")
+        }
+        // Lower start threshold for platform DIRECT tracks, so playback does not wait for
+        // the whole buffer to fill. Override with
+        //   adb shell settings put global nuvio_reduced_start_threshold <frames>
+        // and disable with a value of 0.
+        val defaultStartThresholdFrames = 262144  // ~5.5 s at 48 kHz
+        val reducedStartThresholdFrames = runCatching {
+            android.provider.Settings.Global.getString(context.contentResolver, "nuvio_reduced_start_threshold")
+        }.getOrNull()?.trim()?.toIntOrNull() ?: defaultStartThresholdFrames
+        if (reducedStartThresholdFrames > 0) {
+            Log.w(PlayerRuntimeController.TAG, "STHRESH: DIRECT start threshold -> $reducedStartThresholdFrames frames")
+        }
+        var speedAwareSink: PlaybackSpeedAwareAudioSink? = null
+        val iecAudioSink = IecPassthroughAudioSink(
             sink = baseAudioSink,
-            initialForcePcm = initialForcePcm,
-            forcePcmForBluetooth = bluetoothForcePcm
+            hbrIecEnabled = !useSystemPassthrough && !forceOpticalPassthrough && !bluetoothForcePcm && !iecOff,
+            onIecBecameReady = {
+                Handler(Looper.getMainLooper()).post {
+                    speedAwareSink?.notifyAudioProcessingRequirementChanged()
+                }
+            },
+            onIecFailed = onIecFailed,
+            onDiagnosticEvent = onAudioDiagnosticEvent,
+            audioOutputReady = { PassthroughOutputReturn.outputReadyNow(context) },
+            dtsHdIecEnabled = !dtsHdTvPassthrough,
+            outputRouteKey = { AudioOutputRouteDetector.detect(context)?.key }
         )
+        val playbackSpeedAwareAudioSink = PlaybackSpeedAwareAudioSink(
+            sink = iecAudioSink,
+            initialForcePcm = initialForcePcm,
+            forcePcmForBluetooth = bluetoothForcePcm,
+            passthroughPolicy = audioPassthroughPolicy,
+            onDiagnosticEvent = onAudioDiagnosticEvent,
+            forceAc3Support = forceOpticalPassthrough || deniedTranscodeMimes.isNotEmpty(),
+            faultInjectRejectMime = faultInjectRejectMime,
+            reducedStartThresholdFrames = reducedStartThresholdFrames,
+            platformSink = baseAudioSink,
+            pinnedOutputEncodings = pinnedOutputEncodings
+        )
+        speedAwareSink = playbackSpeedAwareAudioSink
         playbackSpeedAwareAudioSink.setInitialPlaybackSpeed(playbackSpeedProvider())
         onPlaybackSpeedAwareAudioSinkCreated(playbackSpeedAwareAudioSink)
         return playbackSpeedAwareAudioSink
@@ -2378,6 +2684,15 @@ private class SubtitleOffsetRenderersFactory(
                 )
         }
         applyFfmpegRendererSettings(out)
+        // When Force AC-3 Transcoding is on, the FFmpeg audio renderer must outrank MediaCodec
+        // audio for the transcode to engage, but forcing EXTENSION_RENDERER_MODE_PREFER globally
+        // would also reorder *video* extension renderers. Reorder audio-locally: move FFmpeg audio
+        // renderers ahead of other audio renderers in the block just built.
+        if ((forceOpticalPassthrough || preferFfmpegAudio) && out.size > startIndex) {
+            val audioBlock = out.subList(startIndex, out.size)
+            val reordered = audioBlock.sortedByDescending { it is FfmpegAudioRenderer }
+            for (i in reordered.indices) audioBlock[i] = reordered[i]
+        }
     }
 
     override fun buildTextRenderers(
@@ -2412,32 +2727,31 @@ private class SubtitleOffsetRenderersFactory(
                 downmixEnabled = downmixEnabled,
                 audioOutputChannels = audioOutputChannels,
                 downmixNormalizationEnabled = downmixNormalizationEnabled,
-                lfeMixLevel = downmixLfeLevel,
-                forceOpticalPassthrough = forceOpticalPassthrough
+                forceOpticalPassthrough = forceOpticalPassthrough,
+                deniedTranscodeMimes = deniedTranscodeMimes
             )
         }
         onFfmpegAudioRendererChanged(ffmpegRenderers.firstOrNull())
     }
 }
-private fun FfmpegAudioRenderer.applyDownmixSettings(
+internal fun FfmpegAudioRenderer.applyDownmixSettings(
     downmixEnabled: Boolean,
     audioOutputChannels: com.nuvio.tv.data.local.AudioOutputChannels,
     downmixNormalizationEnabled: Boolean,
-    lfeMixLevel: Float,
-    forceOpticalPassthrough: Boolean
+    forceOpticalPassthrough: Boolean,
+    deniedTranscodeMimes: Set<String>
 ) {
     setForceOpticalPassthrough(forceOpticalPassthrough)
+    setDeniedTranscodeMimes(deniedTranscodeMimes)
     if (downmixEnabled) {
         setAudioOutputChannels(
             audioOutputChannels.ffmpegLayoutName,
             audioOutputChannels.channelCount
         )
         setDownmixNormalizationEnabled(downmixNormalizationEnabled)
-        setLfeMixLevel(lfeMixLevel)
     } else {
         setAudioOutputChannels(null, 0)
         setDownmixNormalizationEnabled(false)
-        setLfeMixLevel(0f)
     }
 }
 
@@ -2875,6 +3189,14 @@ private fun PlayerRuntimeController.recordFirstFrameDiagnostics(
         dv7DoviSuccess = conversionSucceeded.toInt(),
         dv7DoviSignalRewrites = signalingRewrites.toInt(),
         dvSourceProfile = sourceProfile?.toString(),
+        dvElType = when (DolbyVisionConversionStats.getLastElType()) {
+            DoviBridge.EL_TYPE_FEL -> "FEL"
+            DoviBridge.EL_TYPE_MEL -> "MEL"
+            DoviBridge.EL_TYPE_NONE, -1 -> "unknown"
+            else -> null
+        },
+        dv7RpuDrops = DolbyVisionConversionStats.getRpuDropCount().toInt(),
+        dvHdrMastering = DolbyVisionConversionStats.getLastRpuMetadata()?.toDiagnosticLine(),
         videoResolution = if (currentVideoTrackWidth > 0 && currentVideoTrackHeight > 0)
             "${currentVideoTrackWidth}x${currentVideoTrackHeight}" else null,
         videoCodec = friendlyVideoCodecName(currentVideoTrackMimeType, currentVideoTrackCodecs),
@@ -2988,3 +3310,11 @@ internal fun PlayerRuntimeController.applyMediaSourceFactorySettings(playerSetti
     mediaSourceFactory.bufferBudgetManaged = playerSettings.bufferBudgetManaged
     lastAppliedPlayerSettings = playerSettings
 }
+
+
+/** Reads an Android system property (debug.* switches settable with adb, no root); null if unavailable. */
+internal fun audioSystemProperty(name: String): String? = runCatching {
+    Class.forName("android.os.SystemProperties")
+        .getMethod("get", String::class.java)
+        .invoke(null, name) as? String
+}.getOrNull()

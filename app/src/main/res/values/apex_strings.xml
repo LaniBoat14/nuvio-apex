@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="playback_net_auto_speedup">Automatic speed-up</string>
-    <string name="playback_net_auto_speedup_sub">Helps films that keep buffering from far-away servers. The app asks the box for a bigger download window and, on boxes with enough memory, adds extra downloads if a film still runs short. Off: one standard download.</string>
-    <string name="playback_net_auto_speedup_custom_note">With Custom network on, your own connection settings are used. Only the bigger download window still applies.</string>
-</resources>
