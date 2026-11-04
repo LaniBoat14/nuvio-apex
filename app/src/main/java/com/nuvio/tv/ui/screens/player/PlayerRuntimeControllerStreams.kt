@@ -1067,6 +1067,8 @@ internal fun PlayerRuntimeController.switchToSourceStream(
                     resolutionMatchingEnabled = playerSettings.resolutionMatchingEnabled,
                     mimeType = currentStreamMimeType
                 )
+                noteSpeedupHint(playbackUrl)
+                armStartCushion(playbackUrl)
                 player.setMediaSource(
                     mediaSourceFactory.createMediaSource(
                         context = context,
