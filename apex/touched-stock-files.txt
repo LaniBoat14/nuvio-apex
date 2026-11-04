@@ -56,3 +56,4 @@ app/src/main/java/com/nuvio/tv/ui/screens/settings/NetworkSettingsScreen.kt
 app/src/main/java/com/nuvio/tv/ui/screens/settings/PlaybackAudioSettings.kt
 app/src/main/java/com/nuvio/tv/ui/screens/settings/PlaybackSettingsModel.kt
 app/src/main/java/com/nuvio/tv/ui/screens/settings/PlaybackVideoSettings.kt
+app/src/main/baseline-prof.txt

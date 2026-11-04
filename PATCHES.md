@@ -58,6 +58,7 @@ Rule: nothing outside this ledger differs from stock. `python3 apex/apex_purity.
 | `app/src/main/java/com/nuvio/tv/ui/screens/settings/PlaybackAudioSettings.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
 | `app/src/main/java/com/nuvio/tv/ui/screens/settings/PlaybackSettingsModel.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
 | `app/src/main/java/com/nuvio/tv/ui/screens/settings/PlaybackVideoSettings.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
+| `app/src/main/baseline-prof.txt` | Wildcard rules for the playback path (engine, network, IEC, stats) so Arc code is precompiled like the stock player. |
 
 ## Added files
 
