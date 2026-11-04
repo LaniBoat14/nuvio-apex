@@ -28,6 +28,36 @@ Rule: nothing outside this ledger differs from stock. `python3 apex/apex_purity.
 | `app/src/main/java/com/nuvio/tv/ui/screens/player/PlaybackConnectionEvents.kt` | Replaced by the Arc engine version. |
 | `app/src/main/java/com/nuvio/tv/ui/screens/player/PlayerMediaSourceFactory.kt` | Replaced by the Arc engine version. |
 | `app/src/main/java/com/nuvio/tv/ui/screens/player/PlayerPlaybackNetworking.kt` | Replaced by the Arc engine version. |
+| `app/libs/lib-decoder-ffmpeg-release.aar` | Replaced by the Arc ffmpeg decoder aar (denied-transcode planning, surround, IEC passthrough support). |
+| `app/proguard-rules.pro` | Keeps `DefaultAudioSink.audioTrack` for the stats overlay. |
+| `app/src/main/cpp/dovi_bridge.cpp` | Dolby Vision edition: Arc DV7 conversion, RPU/HDR10 handling and stats. |
+| `app/src/main/java/com/nuvio/tv/core/network/StreamSpeedTester.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
+| `app/src/main/java/com/nuvio/tv/core/player/DolbyVisionExtractorsFactory.kt` | Dolby Vision edition: Arc DV7 conversion, RPU/HDR10 handling and stats. |
+| `app/src/main/java/com/nuvio/tv/core/player/DolbyVisionMatroskaTransformer.kt` | Dolby Vision edition: Arc DV7 conversion, RPU/HDR10 handling and stats. |
+| `app/src/main/java/com/nuvio/tv/core/player/DoviBridge.kt` | Dolby Vision edition: Arc DV7 conversion, RPU/HDR10 handling and stats. |
+| `app/src/main/java/com/nuvio/tv/core/player/HevcDvRpuStripper.kt` | Dolby Vision edition: Arc DV7 conversion, RPU/HDR10 handling and stats. |
+| `app/src/main/java/com/nuvio/tv/core/player/HevcHdr10PlusStripper.kt` | Dolby Vision edition: Arc DV7 conversion, RPU/HDR10 handling and stats. |
+| `app/src/main/java/com/nuvio/tv/core/player/dvmkv/MatroskaExtractor.java` | Dolby Vision edition: Arc DV7 conversion, RPU/HDR10 handling and stats. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/player/AudioOutputRouteDetector.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/player/DolbyVisionBaseLayerPolicy.kt` | Dolby Vision edition: Arc DV7 conversion, RPU/HDR10 handling and stats. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/player/LastPlaybackDiagnostics.kt` | Dolby Vision edition: Arc DV7 conversion, RPU/HDR10 handling and stats. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/player/PlaybackSpeedAwareAudioRenderer.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/player/PlaybackSpeedAwareAudioSink.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/player/PlayerMediaInfo.kt` | Sectioned stats overlay: analytics control button, polling, view-model sampling, diagnostics. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/player/PlayerPlaybackAnalyticsDiagnostics.kt` | Sectioned stats overlay: analytics control button, polling, view-model sampling, diagnostics. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/player/PlayerRuntimeControllerAudioDelayRoutes.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/player/PlayerRuntimeControllerMetadata.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/player/PlayerRuntimeControllerMpv.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/player/PlayerRuntimeControllerStreams.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/player/PlayerRuntimeControllerTrackSelection.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/player/PlayerRuntimeControllerTracks.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/player/PlayerScreen.kt` | Sectioned stats overlay: analytics control button, polling, view-model sampling, diagnostics. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/player/PlayerUiState.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/player/PlayerViewModel.kt` | Sectioned stats overlay: analytics control button, polling, view-model sampling, diagnostics. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/settings/NetworkSettingsScreen.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/settings/PlaybackAudioSettings.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/settings/PlaybackSettingsModel.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/settings/PlaybackVideoSettings.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
 
 ## Added files
 
