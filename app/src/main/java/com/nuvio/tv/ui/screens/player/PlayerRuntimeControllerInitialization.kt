@@ -1,13 +1,5 @@
 package com.nuvio.tv.ui.screens.player
 
-import com.nuvio.tv.core.player.BufferAhead
-
-import com.nuvio.tv.core.player.BufferBudgetControl
-
-import com.nuvio.tv.core.player.BufferTopUp
-
-import com.nuvio.tv.core.player.BufferSizing
-
 import android.content.Context
 import android.content.res.Resources
 import android.graphics.RectF

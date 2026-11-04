@@ -12,9 +12,15 @@ internal fun PlayerRuntimeController.releasePlayer() {
 // engine's local url, which stops serving once the torrent stream is stopped.
 internal fun PlayerRuntimeController.releasePlayer(
     flushPlaybackState: Boolean,
+    preserveRecovery: Boolean = false,
     keepTorrentStream: Boolean = false,
     trimBufferInBackground: Boolean = false
 ) {
+    if (!preserveRecovery) {
+        playbackRecoveryJob?.cancel()
+        playbackRecoveryJob = null
+        playbackRecoveryGate.cancel(resetIdentity = flushPlaybackState)
+    }
     logScrobbleDiagnostic("release_player", "flushPlaybackState=$flushPlaybackState")
 
     // Preserve current subtitle selection across any rebuild. When the user explicitly
@@ -49,6 +55,8 @@ internal fun PlayerRuntimeController.releasePlayer(
     }
 
     isReleasingPlayer = true
+    PlaybackByteCounter.reset()
+    PlaybackLanes.clear()
     com.nuvio.tv.core.recommendations.TvRecommendationManager.isPlaybackActive.value = false
     if (flushPlaybackState) {
         if (!keepTorrentStream) stopTorrentStream()
@@ -59,6 +67,10 @@ internal fun PlayerRuntimeController.releasePlayer(
     unregisterAudioDelayRouteCallback()
     audioRouteChangeJob?.cancel()
     audioRouteChangeJob = null
+    passthroughReturnCheckJob?.cancel()
+    passthroughReturnCheckJob = null
+    busyOutputCheckJob?.cancel()
+    busyOutputCheckJob = null
 
     releaseMediaSession()
     progressJob?.cancel()
@@ -102,8 +114,6 @@ internal fun PlayerRuntimeController.releasePlayer(
     mpvStableProgressResetJob?.cancel()
     mpvStableProgressResetJob = null
     releaseMpvPlayer()
-    PlaybackByteCounter.reset()
-    PlaybackLanes.clear()
     // Leaving the player: the playback thread would free the whole buffer while stop() and clearVideoSurface() wait
     // for it on Main, so that is done on a background thread once the player is gone.
     val deferredTrim = if (trimBufferInBackground) {
@@ -128,6 +138,8 @@ internal fun PlayerRuntimeController.releasePlayer(
     currentBitrateAwareLoadControl = null
     currentParallelChunkOverheadMb = 0
     ffmpegAudioRenderer = null
+    // No player, no bypass.
+    isAudioOutputBypassing = false
     updateAudioControlAvailability()
     playbackSpeedAwareAudioSink = null
     resetPlaybackTimeline()
@@ -147,6 +159,7 @@ internal fun PlayerRuntimeController.notifyAudioSessionUpdate(active: Boolean) {
                 intent.putExtra(AudioEffect.EXTRA_CONTENT_TYPE, AudioEffect.CONTENT_TYPE_MOVIE)
             }
             context.sendBroadcast(intent)
+            effectControlSessionId = if (active) player.audioSessionId else null
         } catch (e: SecurityException) {
             e.printStackTrace()
         }
