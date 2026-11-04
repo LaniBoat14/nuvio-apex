@@ -1,3 +1,11 @@
 # Every stock Nuvio b10 file Apex modifies or deletes must be listed here and explained in PATCHES.md.
 # scripts/apex_purity.py fails the build for any other modified or deleted stock file.
 app/build.gradle.kts
+.github/workflows/android-release.yml
+.github/workflows/close-stale-issues.yml
+.github/workflows/close-unlabeled-issues.yml
+.github/workflows/pr-full-debug-build-comment.yml
+.github/workflows/pr-full-debug-build.yml
+.github/workflows/pr-template-check.yml
+.github/workflows/stale-needs-info.yml
+.github/workflows/triage-needs-info.yml

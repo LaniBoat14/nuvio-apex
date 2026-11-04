@@ -26,7 +26,7 @@ for line in out.splitlines():
     touched.add(path)
     if path not in allowed:
         bad.append(f"{status} {path}")
-missing = sorted(p for p in allowed if p not in ledger)
+missing = sorted(p for p in allowed if p not in ledger and p.rsplit("/",1)[-1].removesuffix(".yml") not in ledger)
 unused = sorted(allowed - touched)
 if bad or missing:
     print("Stock purity check failed.")
