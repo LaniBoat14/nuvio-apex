@@ -9,3 +9,4 @@ app/build.gradle.kts
 .github/workflows/pr-template-check.yml
 .github/workflows/stale-needs-info.yml
 .github/workflows/triage-needs-info.yml
+libmpv-android
