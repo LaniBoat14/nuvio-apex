@@ -5,6 +5,7 @@
 
 package com.nuvio.tv.ui.screens.player
 
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.layout.boundsInWindow
 import android.graphics.RectF
@@ -245,6 +246,7 @@ fun PlayerScreen(
     val postPlayRecommendationFocusRequester = remember { FocusRequester() }
     val postPlayRecommendationPlayerWindowFocusRequester = remember { FocusRequester() }
     var skipButtonActuallyVisible by remember { mutableStateOf(false) }
+    var showPlaybackStats by remember { mutableStateOf(false) }
     var restoreStreamInfoFocus by remember { mutableStateOf(false) }
     var focusPlayAfterMoreBack by remember { mutableStateOf(false) }
     var hideControlsAfterStreamInfo by remember { mutableStateOf(false) }
@@ -362,6 +364,8 @@ fun PlayerScreen(
             returnToDetailsFromEndPrompt()
         } else if (uiState.error != null) {
             exitPlayerFromError()
+        } else if (showPlaybackStats) {
+            showPlaybackStats = false
         } else if (uiState.showAudioOverlay || uiState.showSubtitleOverlay) {
             viewModel.onEvent(PlayerEvent.OnDismissTransientOverlay)
         } else if (uiState.showStreamInfoOverlay) {
@@ -1396,6 +1400,31 @@ fun PlayerScreen(
             )
         }
 
+        var playbackStatsSample by remember { mutableStateOf<PlaybackStatsSample?>(null) }
+        val statsHostView = androidx.compose.ui.platform.LocalView.current
+        LaunchedEffect(showPlaybackStats) {
+            if (!showPlaybackStats) {
+                playbackStatsSample = null
+                return@LaunchedEffect
+            }
+            pollPlaybackStats(probe = { viewModel.samplePing() }, sample = { ping ->
+                val display = statsHostView.display
+                val mode = display?.mode
+                val options = display?.supportedModes?.count {
+                    it.physicalWidth == mode?.physicalWidth && it.physicalHeight == mode?.physicalHeight
+                }
+                playbackStatsSample = viewModel.samplePlaybackStats(mode?.refreshRate, options,
+                    mode?.physicalWidth, mode?.physicalHeight, ping)
+            })
+        }
+        PlaybackStatsOverlay(
+            visible = showPlaybackStats && uiState.error == null,
+            sample = playbackStatsSample,
+            compact = false,
+            modifier = Modifier.align(Alignment.TopEnd)
+                .padding(top = NuvioTheme.spacing.sm, end = NuvioTheme.spacing.lg).zIndex(2.9f)
+        )
+
         // Torrent stats overlay (top-right corner)
         TorrentOverlay(
             visible = uiState.isTorrentStream && uiState.showTorrentStats &&
@@ -1663,6 +1692,7 @@ fun PlayerScreen(
                         }
                     }
                 }.takeUnless { uiState.isServerStream },
+                onShowPlaybackStats = { showPlaybackStats = !showPlaybackStats },
                 onShowStreamInfo = {
                     restoreStreamInfoFocus = true
                     viewModel.onEvent(PlayerEvent.OnShowStreamInfo)
@@ -2780,6 +2810,7 @@ private fun PlayerControlsOverlay(
     onReportPlaybackIssue: () -> Unit,
     onToggleMoreActions: () -> Unit,
     onOpenInExternalPlayer: (() -> Unit)?,
+    onShowPlaybackStats: () -> Unit,
     onShowStreamInfo: () -> Unit,
     onResetHideTimer: () -> Unit,
     onHideControls: () -> Unit,
@@ -3162,6 +3193,15 @@ private fun PlayerControlsOverlay(
                             }
                         }
                     }
+
+                    ControlButton(
+                        icon = Icons.Default.BarChart,
+                        contentDescription = "Playback analytics",
+                        onClick = { onShowPlaybackStats(); onResetHideTimer() },
+                        upFocusRequester = progressUpTarget,
+                        onDownKey = onHideControls,
+                        onFocused = onResetHideTimer
+                    )
 
                     ControlButton(
                         icon = if (uiState.showMoreDialog) {

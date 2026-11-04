@@ -4,12 +4,15 @@ import android.util.Log
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.nuvio.tv.core.profile.ProfileManager
+import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.core.player.LastPlaybackDiagnostics
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +21,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
@@ -217,13 +221,16 @@ data class BufferSettings(
     val backBufferDurationMs: Int = DEFAULT_BACK_BUFFER_DURATION_MS,
     val retainBackBufferFromKeyframe: Boolean = false
 ) {
+    /** The Buffer ahead setting. Min and Max are both still stored, for sync and older builds. */
+    val bufferAheadMs: Int get() = com.nuvio.tv.core.player.BufferAhead.fromStored(minBufferMs, maxBufferMs)
+
     companion object {
         const val DEFAULT_MIN_BUFFER_MS = 15_000
         const val DEFAULT_MAX_BUFFER_MS = 45_000
         const val DEFAULT_BUFFER_FOR_PLAYBACK_MS = 5_000
         const val DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 3_000
-        const val DEFAULT_TARGET_BUFFER_SIZE_MB: Int = 50
-        const val DEFAULT_BACK_BUFFER_DURATION_MS = 0
+        const val DEFAULT_TARGET_BUFFER_SIZE_MB: Int = 150
+        const val DEFAULT_BACK_BUFFER_DURATION_MS = 5_000
     }
 }
 
@@ -311,6 +318,21 @@ data class PlayerSettings(
     val downmixLfeLevel: DownmixLfeLevel = DownmixLfeLevel.OFF,
     val tunnelingEnabled: Boolean = false,
     val forceOpticalPassthrough: Boolean = false,
+    val useSystemPassthrough: Boolean = false,
+    val dtsHdTvPassthrough: Boolean = false,
+    val surroundFormatMode: SurroundFormatMode = SurroundFormatMode.AUTO,
+    val surroundChannelTarget: SurroundChannelTarget = SurroundChannelTarget.AUTO,
+    val surroundTvArcSoundbar: Boolean = false,
+    val allowAc3Passthrough: Boolean = true,
+    val allowEac3Passthrough: Boolean = true,
+    val allowTruehdPassthrough: Boolean = true,
+    val allowDtsPassthrough: Boolean = true,
+    val allowDtshdPassthrough: Boolean = true,
+    val deniedCodecHandling: DeniedCodecHandling = DeniedCodecHandling.DECODE_PCM,
+    val audioRejectionsSeen: Set<String> = emptySet(),
+    val audioRejectionsConfirmed: Set<String> = emptySet(),
+    val tunnelDeadAudioClasses: Set<String> = emptySet(),
+    val tunnelDeadAudioSignature: String? = null,
     val skipSilence: Boolean = false,
     val nightMode: NightMode = NightMode.OFF,
     val audioAmplificationDb: Int = 0,
@@ -338,6 +360,7 @@ data class PlayerSettings(
     // Only honored when dv7HandlingMode is OFF or DV81_LIBDOVI.
     val dv7LibdoviModeOverride: Int = -1,
     val stripHdr10PlusSei: Boolean = false,
+    val injectHdr10MetadataOnStrip: Boolean = false,
     /** ExoPlayer reads Matroska chapters itself over HTTP; mpv always lists them. */
     val exoChaptersEnabled: Boolean = false,
     val mpvHi10pGnextSoftwareFallbackEnabled: Boolean = false,
@@ -372,6 +395,7 @@ data class PlayerSettings(
 
     // Networking
     val bufferEngineEnabled: Boolean = false,
+    val autoSpeedupEnabled: Boolean = true,
     val parallelNetworkEnabled: Boolean = false,
     /** When true the device memory budget caps the buffer; when false Target Buffer Size drives it. */
     val bufferBudgetManaged: Boolean = DEFAULT_BUFFER_BUDGET_MANAGED,
@@ -395,9 +419,12 @@ data class PlayerSettings(
     val isPreferAppDecoder: Boolean
         get() = decoderPriority == 2
 
-    /** FFmpeg downmix only runs when the app decoder is preferred. */
+    /**
+     * Kodi model: passthrough wins, downmix applies only to what the app
+     * decodes. Armed whenever the FFmpeg renderer exists (decoderPriority != 0).
+     */
     val effectiveDownmixEnabled: Boolean
-        get() = downmixEnabled && isPreferAppDecoder
+        get() = downmixEnabled && decoderPriority != 0
 
     /**
      * Tunneled playback cannot share the FFmpeg audio path. Prefer-app decoder
@@ -438,7 +465,7 @@ data class PlayerSettings(
         fun isBoundedTimeout(timeoutSeconds: Int): Boolean =
             timeoutSeconds > 0 && timeoutSeconds != STREAM_AUTOPLAY_TIMEOUT_UNLIMITED
 
-        const val DEFAULT_BUFFER_BUDGET_MANAGED = false
+        const val DEFAULT_BUFFER_BUDGET_MANAGED = true
         const val DEFAULT_ALLOW_LARGE_TARGET_BUFFER = false
         const val LARGE_TARGET_BUFFER_MAX_MB = 2048
         const val DEFAULT_VOD_CACHE_ENABLED = false
@@ -450,7 +477,10 @@ data class PlayerSettings(
         const val DEFAULT_PARALLEL_CONNECTION_COUNT = 2
         const val DEFAULT_PARALLEL_CHUNK_SIZE_KB = 16 * 1024
         const val MIN_PARALLEL_CONNECTION_COUNT = 2
-        const val MAX_PARALLEL_CONNECTION_COUNT = 4
+        const val MAX_PARALLEL_CONNECTION_COUNT = 8
+        const val MAX_PARALLEL_CONNECTION_COUNT_NATIVE_MEMORY = 16
+        fun maxParallelConnectionCount(nativeMemory: Boolean): Int =
+            if (nativeMemory) MAX_PARALLEL_CONNECTION_COUNT_NATIVE_MEMORY else MAX_PARALLEL_CONNECTION_COUNT
         const val MIN_PARALLEL_CHUNK_SIZE_KB = 256
         const val MAX_PARALLEL_CHUNK_SIZE_KB = 128 * 1024
         const val DEFAULT_ENABLE_HTTP2 = false
@@ -582,12 +612,79 @@ enum class LibassRenderMode {
  *   STRIP_DV: libdovi DV stripping
  * - OFF: pass DV7 through untouched (may glitch on hardware lacking DV7 support)
  */
+enum class SurroundFormatMode {
+    AUTO,
+    MANUAL;
+
+    companion object {
+        fun fromStoredString(value: String?): SurroundFormatMode =
+            entries.firstOrNull { it.name == value } ?: AUTO
+    }
+}
+
+enum class SurroundChannelTarget {
+    AUTO,
+    CH_2_0,
+    CH_5_1,
+    CH_7_1;
+
+    companion object {
+        fun fromStoredString(value: String?): SurroundChannelTarget =
+            entries.firstOrNull { it.name == value } ?: AUTO
+    }
+}
+
+enum class DeniedCodecHandling {
+    DECODE_PCM,
+    TRANSCODE_AC3;
+
+    companion object {
+        fun fromStoredString(value: String?): DeniedCodecHandling =
+            entries.firstOrNull { it.name == value } ?: DECODE_PCM
+    }
+}
+
+internal const val TUNNEL_STALL_MAX_AGE_MS: Long = 14L * 24 * 60 * 60 * 1000
+
+/** A saved tunnel stall list lasts 14 days and ends with the next app update. */
+internal fun tunnelStallsExpired(
+    savedAtMs: Long?,
+    savedAppVersion: Int?,
+    nowMs: Long,
+    currentAppVersion: Int,
+): Boolean {
+    if (savedAtMs == null || savedAppVersion == null) return true
+    if (savedAppVersion != currentAppVersion) return true
+    return kotlin.math.abs(nowMs - savedAtMs) > TUNNEL_STALL_MAX_AGE_MS
+}
+
+/**
+ * Surround mode as stored. An install that never chose a mode but has a format switch
+ * off, or transcodes denied formats, reads as MANUAL so those choices keep applying.
+ */
+internal fun storedSurroundFormatMode(
+    storedMode: String?,
+    allowSwitches: List<Boolean?>,
+    storedDeniedCodecHandling: String?
+): SurroundFormatMode {
+    if (storedMode != null) return SurroundFormatMode.fromStoredString(storedMode)
+    val hasManualChoice = allowSwitches.any { it == false } ||
+        storedDeniedCodecHandling == DeniedCodecHandling.TRANSCODE_AC3.name
+    return if (hasManualChoice) SurroundFormatMode.MANUAL else SurroundFormatMode.AUTO
+}
+
 enum class Dv7HandlingMode {
     AUTO,
     HDR10_BASE_LAYER,
     DV81_LIBDOVI,
     STRIP_DV,
-    OFF;
+    OFF,
+    /**
+     * Kept for settings/diagnostics compatibility with Arc. The Amlogic native FEL/MEL path
+     * (core/player/amlfel) is NOT part of Flow, so this value is never offered in the UI
+     * and always behaves exactly like [AUTO].
+     */
+    NATIVE_FEL;
 
     companion object {
         /** Tolerant string parser used by the DataStore. */
@@ -597,6 +694,7 @@ enum class Dv7HandlingMode {
             DV81_LIBDOVI.name -> DV81_LIBDOVI
             STRIP_DV.name -> STRIP_DV
             OFF.name -> OFF
+            NATIVE_FEL.name -> NATIVE_FEL
             else -> AUTO
         }
     }
@@ -639,6 +737,27 @@ class PlayerSettingsDataStore @Inject constructor(
         booleanPreferencesKey("downmix_normalization_enabled")
     private val tunnelingEnabledKey = booleanPreferencesKey("tunneling_enabled")
     private val forceOpticalPassthroughKey = booleanPreferencesKey("force_optical_passthrough")
+    private val allowAc3PassthroughKey = booleanPreferencesKey("allow_ac3_passthrough")
+    private val allowEac3PassthroughKey = booleanPreferencesKey("allow_eac3_passthrough")
+    private val allowTruehdPassthroughKey = booleanPreferencesKey("allow_truehd_passthrough")
+    private val allowDtsPassthroughKey = booleanPreferencesKey("allow_dts_passthrough")
+    private val allowDtshdPassthroughKey = booleanPreferencesKey("allow_dtshd_passthrough")
+    private val allowDtshdPassthroughLegacyKey = booleanPreferencesKey("allow_dts_hd_passthrough")
+    private val useSystemPassthroughKey = booleanPreferencesKey("use_system_passthrough")
+    private val dtsHdTvPassthroughKey = booleanPreferencesKey("dts_hd_tv_passthrough")
+    private val surroundFormatModeKey = stringPreferencesKey("surround_format_mode")
+    private val surroundChannelTargetKey = stringPreferencesKey("surround_channel_target")
+    private val surroundTvArcSoundbarKey = booleanPreferencesKey("surround_tv_arc_soundbar")
+    private val deniedCodecHandlingKey = stringPreferencesKey("denied_codec_handling")
+    private val audioRejectionsSeenKey = stringSetPreferencesKey("audio_rejections_seen")
+    private val audioRejectionsConfirmedKey = stringSetPreferencesKey("audio_rejections_confirmed")
+    private val audioRefusalEvidenceKey = stringSetPreferencesKey("audio_refusal_evidence")
+    private val tunnelDeadAudioClassesKey = stringSetPreferencesKey("tunnel_dead_audio_classes")
+    private val tunnelDeadAudioSignatureKey = stringPreferencesKey("tunnel_dead_audio_signature")
+    private val tunnelDeadAudioSavedAtKey = longPreferencesKey("tunnel_dead_audio_saved_at_ms")
+    private val tunnelDeadAudioAppVersionKey = intPreferencesKey("tunnel_dead_audio_app_version")
+    internal var tunnelStallClock: () -> Long = System::currentTimeMillis
+    internal var tunnelStallAppVersion: () -> Int = { BuildConfig.VERSION_CODE }
     private val skipSilenceKey = booleanPreferencesKey("skip_silence")
     private val nightModeKey = stringPreferencesKey("night_mode")
     private val audioAmplificationDbKey = intPreferencesKey("audio_amplification_db")
@@ -667,6 +786,7 @@ class PlayerSettingsDataStore @Inject constructor(
     private val legacyMapDv7ToHevcKey = booleanPreferencesKey("map_dv7_to_hevc")
     private val dv7LibdoviModeOverrideKey = intPreferencesKey("dv7_libdovi_mode_override")
     private val stripHdr10PlusSeiKey = booleanPreferencesKey("strip_hdr10plus_sei")
+    private val injectHdr10MetadataOnStripKey = booleanPreferencesKey("inject_hdr10_metadata_on_strip")
     private val exoChaptersEnabledKey = booleanPreferencesKey("exo_chapters_enabled")
     private val mpvHi10pGnextSoftwareFallbackEnabledKey =
         booleanPreferencesKey("mpv_hi10p_gnext_software_fallback_enabled")
@@ -706,6 +826,7 @@ class PlayerSettingsDataStore @Inject constructor(
     private val vodCacheSizeMbKey = intPreferencesKey("vod_cache_size_mb")
     private val useParallelConnectionsKey = booleanPreferencesKey("use_parallel_connections")
     private val bufferEngineEnabledKey = booleanPreferencesKey("buffer_engine_enabled")
+    private val autoSpeedupEnabledKey = booleanPreferencesKey("auto_speedup_enabled")
     private val parallelNetworkEnabledKey = booleanPreferencesKey("parallel_network_enabled")
     private val allowLargeTargetBufferKey = booleanPreferencesKey("allow_large_target_buffer")
     private val bufferBudgetManagedKey = booleanPreferencesKey("buffer_budget_managed")
@@ -993,6 +1114,7 @@ class PlayerSettingsDataStore @Inject constructor(
         factory.get(pid, FEATURE).data.onStart { migrateProfile(pid) }
     }.map { prefs ->
         try {
+            val tunnelStallsRunOut = tunnelDeadAudioClassesExpired(prefs)
             PlayerSettings(
                 playerPreference = prefs[playerPreferenceKey]?.let {
                     runCatching { PlayerPreference.valueOf(it) }.getOrDefault(PlayerPreference.INTERNAL)
@@ -1026,6 +1148,33 @@ class PlayerSettingsDataStore @Inject constructor(
                 downmixLfeLevel = DownmixLfeLevel.fromSettingValue(prefs[downmixLfeLevelKey]),
                 tunnelingEnabled = prefs[tunnelingEnabledKey] ?: false,
                 forceOpticalPassthrough = prefs[forceOpticalPassthroughKey] ?: false,
+                useSystemPassthrough = prefs[useSystemPassthroughKey] ?: false,
+                dtsHdTvPassthrough = prefs[dtsHdTvPassthroughKey] ?: false,
+                surroundFormatMode = storedSurroundFormatMode(
+                    storedMode = prefs[surroundFormatModeKey],
+                    allowSwitches = listOf(
+                        prefs[allowAc3PassthroughKey],
+                        prefs[allowEac3PassthroughKey],
+                        prefs[allowTruehdPassthroughKey],
+                        prefs[allowDtsPassthroughKey],
+                        prefs[allowDtshdPassthroughKey] ?: prefs[allowDtshdPassthroughLegacyKey]
+                    ),
+                    storedDeniedCodecHandling = prefs[deniedCodecHandlingKey]
+                ),
+                surroundChannelTarget = SurroundChannelTarget.fromStoredString(prefs[surroundChannelTargetKey]),
+                surroundTvArcSoundbar = prefs[surroundTvArcSoundbarKey] ?: false,
+                allowAc3Passthrough = prefs[allowAc3PassthroughKey] ?: true,
+                allowEac3Passthrough = prefs[allowEac3PassthroughKey] ?: true,
+                allowTruehdPassthrough = prefs[allowTruehdPassthroughKey] ?: true,
+                allowDtsPassthrough = prefs[allowDtsPassthroughKey] ?: true,
+                allowDtshdPassthrough = prefs[allowDtshdPassthroughKey]
+                    ?: prefs[allowDtshdPassthroughLegacyKey]
+                    ?: true,
+                deniedCodecHandling = DeniedCodecHandling.fromStoredString(prefs[deniedCodecHandlingKey]),
+                audioRejectionsSeen = prefs[audioRejectionsSeenKey] ?: emptySet(),
+                audioRejectionsConfirmed = prefs[audioRejectionsConfirmedKey] ?: emptySet(),
+                tunnelDeadAudioClasses = if (tunnelStallsRunOut) emptySet() else prefs[tunnelDeadAudioClassesKey] ?: emptySet(),
+                tunnelDeadAudioSignature = if (tunnelStallsRunOut) null else prefs[tunnelDeadAudioSignatureKey],
                 skipSilence = prefs[skipSilenceKey] ?: false,
                 nightMode = NightMode.fromSettingValue(prefs[nightModeKey]),
                 audioAmplificationDb = (prefs[audioAmplificationDbKey] ?: 0).coerceIn(
@@ -1064,6 +1213,7 @@ class PlayerSettingsDataStore @Inject constructor(
                 },
                 dv7LibdoviModeOverride = (prefs[dv7LibdoviModeOverrideKey] ?: -1).coerceIn(-1, 4),
                 stripHdr10PlusSei = prefs[stripHdr10PlusSeiKey] ?: false,
+                injectHdr10MetadataOnStrip = prefs[injectHdr10MetadataOnStripKey] ?: false,
                 exoChaptersEnabled = prefs[exoChaptersEnabledKey] ?: false,
                 mpvHi10pGnextSoftwareFallbackEnabled =
                     prefs[mpvHi10pGnextSoftwareFallbackEnabledKey] ?: false,
@@ -1133,6 +1283,7 @@ class PlayerSettingsDataStore @Inject constructor(
                 vodCacheSizeMb = (prefs[vodCacheSizeMbKey] ?: PlayerSettings.DEFAULT_VOD_CACHE_SIZE_MB).coerceIn(PlayerSettings.MIN_VOD_CACHE_SIZE_MB, PlayerSettings.MAX_VOD_CACHE_SIZE_MB),
                 useParallelConnections = prefs[useParallelConnectionsKey] ?: PlayerSettings.DEFAULT_USE_PARALLEL_CONNECTIONS,
                 bufferEngineEnabled = prefs[bufferEngineEnabledKey] ?: false,
+                autoSpeedupEnabled = prefs[autoSpeedupEnabledKey] ?: true,
                 parallelNetworkEnabled = prefs[parallelNetworkEnabledKey] ?: false,
                 allowLargeTargetBuffer = prefs[allowLargeTargetBufferKey] ?: PlayerSettings.DEFAULT_ALLOW_LARGE_TARGET_BUFFER,
                 bufferBudgetManaged = prefs[bufferBudgetManagedKey] ?: PlayerSettings.DEFAULT_BUFFER_BUDGET_MANAGED,
@@ -1280,6 +1431,9 @@ class PlayerSettingsDataStore @Inject constructor(
 
     suspend fun setTunnelingEnabled(enabled: Boolean) {
         store().edit { prefs ->
+            if ((prefs[tunnelingEnabledKey] ?: false) != enabled) {
+                removeTunnelDeadAudioClasses(prefs)
+            }
             prefs[tunnelingEnabledKey] = enabled
         }
     }
@@ -1289,6 +1443,192 @@ class PlayerSettingsDataStore @Inject constructor(
             prefs[forceOpticalPassthroughKey] = enabled
         }
     }
+
+    suspend fun recordTunnelDeadAudioClass(audioClass: String, signature: String) {
+        store().edit { prefs ->
+            val sameChain = prefs[tunnelDeadAudioSignatureKey] == signature
+            val keep = sameChain && !tunnelDeadAudioClassesExpired(prefs)
+            val current = if (keep) prefs[tunnelDeadAudioClassesKey] ?: emptySet() else emptySet()
+            prefs[tunnelDeadAudioClassesKey] = current + audioClass
+            prefs[tunnelDeadAudioSignatureKey] = signature
+            prefs[tunnelDeadAudioSavedAtKey] = tunnelStallClock()
+            prefs[tunnelDeadAudioAppVersionKey] = tunnelStallAppVersion()
+        }
+    }
+
+    suspend fun clearTunnelDeadAudioClasses() {
+        store().edit { prefs -> removeTunnelDeadAudioClasses(prefs) }
+    }
+
+    /** Removes a saved stall list that has run out and returns the sound types it held. */
+    suspend fun expireTunnelDeadAudioClasses(): Set<String> {
+        val prefs = store().data.first()
+        if (!tunnelDeadAudioClassesExpired(prefs)) return emptySet()
+        var expired = emptySet<String>()
+        store().edit { current ->
+            if (tunnelDeadAudioClassesExpired(current)) {
+                expired = current[tunnelDeadAudioClassesKey] ?: emptySet()
+                removeTunnelDeadAudioClasses(current)
+            }
+        }
+        return expired
+    }
+
+    private fun tunnelDeadAudioClassesExpired(prefs: androidx.datastore.preferences.core.Preferences): Boolean =
+        !prefs[tunnelDeadAudioClassesKey].isNullOrEmpty() && tunnelStallsExpired(
+            savedAtMs = prefs[tunnelDeadAudioSavedAtKey],
+            savedAppVersion = prefs[tunnelDeadAudioAppVersionKey],
+            nowMs = tunnelStallClock(),
+            currentAppVersion = tunnelStallAppVersion(),
+        )
+
+    private fun removeTunnelDeadAudioClasses(prefs: MutablePreferences) {
+        prefs.remove(tunnelDeadAudioClassesKey)
+        prefs.remove(tunnelDeadAudioSignatureKey)
+        prefs.remove(tunnelDeadAudioSavedAtKey)
+        prefs.remove(tunnelDeadAudioAppVersionKey)
+    }
+
+
+    suspend fun setUseSystemPassthrough(enabled: Boolean) {
+        store().edit { prefs ->
+            prefs[useSystemPassthroughKey] = enabled
+        }
+    }
+
+    suspend fun setDtsHdTvPassthrough(enabled: Boolean) {
+        store().edit { prefs ->
+            prefs[dtsHdTvPassthroughKey] = enabled
+        }
+    }
+
+    suspend fun setSurroundFormatMode(mode: SurroundFormatMode) {
+        store().edit { prefs ->
+            prefs[surroundFormatModeKey] = mode.name
+        }
+    }
+
+    suspend fun setSurroundChannelTarget(target: SurroundChannelTarget) {
+        store().edit { prefs ->
+            prefs[surroundChannelTargetKey] = target.name
+        }
+    }
+
+    suspend fun setSurroundTvArcSoundbar(enabled: Boolean) {
+        store().edit { prefs ->
+            prefs[surroundTvArcSoundbarKey] = enabled
+        }
+    }
+
+    // Keeps the mode an older install reads as MANUAL once its switches change.
+    private fun pinSurroundFormatMode(prefs: MutablePreferences) {
+        if (prefs[surroundFormatModeKey] != null) return
+        prefs[surroundFormatModeKey] = storedSurroundFormatMode(
+            storedMode = null,
+            allowSwitches = listOf(
+                prefs[allowAc3PassthroughKey],
+                prefs[allowEac3PassthroughKey],
+                prefs[allowTruehdPassthroughKey],
+                prefs[allowDtsPassthroughKey],
+                prefs[allowDtshdPassthroughKey] ?: prefs[allowDtshdPassthroughLegacyKey]
+            ),
+            storedDeniedCodecHandling = prefs[deniedCodecHandlingKey]
+        ).name
+    }
+
+    suspend fun setAllowAc3Passthrough(enabled: Boolean) {
+        store().edit { prefs ->
+            pinSurroundFormatMode(prefs)
+            prefs[allowAc3PassthroughKey] = enabled
+        }
+    }
+
+    suspend fun setAllowEac3Passthrough(enabled: Boolean) {
+        store().edit { prefs ->
+            pinSurroundFormatMode(prefs)
+            prefs[allowEac3PassthroughKey] = enabled
+        }
+    }
+
+    suspend fun setAllowTruehdPassthrough(enabled: Boolean) {
+        store().edit { prefs ->
+            pinSurroundFormatMode(prefs)
+            prefs[allowTruehdPassthroughKey] = enabled
+        }
+    }
+
+    suspend fun setAllowDtsPassthrough(enabled: Boolean) {
+        store().edit { prefs ->
+            pinSurroundFormatMode(prefs)
+            prefs[allowDtsPassthroughKey] = enabled
+        }
+    }
+
+    suspend fun setAllowDtshdPassthrough(enabled: Boolean) {
+        store().edit { prefs ->
+            pinSurroundFormatMode(prefs)
+            prefs[allowDtshdPassthroughKey] = enabled
+            prefs.remove(allowDtshdPassthroughLegacyKey)
+        }
+    }
+
+    suspend fun recordAudioRejection(routeKey: String, formatGroup: String) {
+        val entry = "$routeKey::$formatGroup"
+        store().edit { prefs ->
+            val confirmed = prefs[audioRejectionsConfirmedKey] ?: emptySet()
+            prefs[audioRejectionsConfirmedKey] = confirmed + entry
+            prefs.remove(audioRejectionsSeenKey)
+        }
+    }
+
+    suspend fun audioRefusalEvidence(): Set<String> = store().data.first()[audioRefusalEvidenceKey] ?: emptySet()
+
+    suspend fun saveAudioRefusalEvidence(records: Set<String>) {
+        store().edit { prefs ->
+            if (records.isEmpty()) prefs.remove(audioRefusalEvidenceKey) else prefs[audioRefusalEvidenceKey] = records
+        }
+    }
+
+    suspend fun clearAudioRejection(entry: String) {
+        store().edit { prefs ->
+            val confirmed = prefs[audioRejectionsConfirmedKey] ?: emptySet()
+            if (entry in confirmed) prefs[audioRejectionsConfirmedKey] = confirmed - entry
+        }
+    }
+
+    /** Clears the learned rejections once per token; the token comes from a device setting. */
+    suspend fun consumeAudioRejectionReset(token: String): Boolean {
+        if (token.isBlank() || token == "0" || token.length > 64) return false
+        var consumed = false
+        val key = stringPreferencesKey("audio_rejection_reset_token")
+        store().edit { prefs ->
+            if (prefs[key] != token) {
+                prefs.removeLearnedAudioRejections()
+                prefs[key] = token
+                consumed = true
+            }
+        }
+        return consumed
+    }
+
+    /** Lets every format the receiver was learned to refuse be tried for passthrough again. */
+    suspend fun clearLearnedAudioRejections() {
+        store().edit { prefs -> prefs.removeLearnedAudioRejections() }
+    }
+
+    private fun androidx.datastore.preferences.core.MutablePreferences.removeLearnedAudioRejections() {
+        remove(audioRejectionsSeenKey)
+        remove(audioRejectionsConfirmedKey)
+        remove(audioRefusalEvidenceKey)
+    }
+
+    suspend fun setDeniedCodecHandling(handling: DeniedCodecHandling) {
+        store().edit { prefs ->
+            pinSurroundFormatMode(prefs)
+            prefs[deniedCodecHandlingKey] = handling.name
+        }
+    }
+
 
     suspend fun setSkipSilence(enabled: Boolean) {
         store().edit { prefs ->
@@ -1742,6 +2082,7 @@ class PlayerSettingsDataStore @Inject constructor(
     suspend fun setDv7HandlingMode(mode: Dv7HandlingMode) { store().edit { it[dv7HandlingModeKey] = mode.name } }
     suspend fun setDv7LibdoviModeOverride(mode: Int) { store().edit { it[dv7LibdoviModeOverrideKey] = mode.coerceIn(-1, 4) } }
     suspend fun setStripHdr10PlusSei(enabled: Boolean) { store().edit { it[stripHdr10PlusSeiKey] = enabled } }
+    suspend fun setInjectHdr10MetadataOnStrip(enabled: Boolean) { store().edit { it[injectHdr10MetadataOnStripKey] = enabled } }
     suspend fun setExoChaptersEnabled(enabled: Boolean) { store().edit { it[exoChaptersEnabledKey] = enabled } }
 
     // Subtitle styles
@@ -1794,6 +2135,18 @@ class PlayerSettingsDataStore @Inject constructor(
     }
 
     // Buffer settings functions
+
+    suspend fun setBufferAheadMs(ms: Int) = setBufferAheadMs(ms, profileManager.activeProfileId.value)
+
+    /** Min and Max both take the value, so synced profiles and older builds see the same buffer. */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    internal suspend fun setBufferAheadMs(ms: Int, profileId: Int) {
+        store(profileId).edit { prefs ->
+            val value = ms.coerceIn(com.nuvio.tv.core.player.BufferAhead.MIN_MS, com.nuvio.tv.core.player.BufferAhead.limitMs(isNativeMemoryActive(prefs)))
+            prefs[minBufferMsKey] = value
+            prefs[maxBufferMsKey] = value
+        }
+    }
 
     suspend fun setBufferMinBufferMs(ms: Int) {
         store().edit { prefs ->
@@ -1879,6 +2232,10 @@ class PlayerSettingsDataStore @Inject constructor(
     suspend fun setUseParallelConnections(enabled: Boolean) { store().edit { it[useParallelConnectionsKey] = enabled } }
     suspend fun setBufferEngineEnabled(enabled: Boolean) {
         store().edit { it[bufferEngineEnabledKey] = enabled }
+    }
+
+    suspend fun setAutoSpeedupEnabled(enabled: Boolean) {
+        store().edit { it[autoSpeedupEnabledKey] = enabled }
     }
 
     suspend fun setParallelNetworkEnabled(enabled: Boolean) {

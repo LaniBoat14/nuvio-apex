@@ -149,3 +149,8 @@
 
 -dontwarn java.beans.ConstructorProperties
 -dontwarn java.beans.Transient
+
+# Arc HUD reads the platform AudioTrack from Media3's sink by field name.
+-keepclassmembers class androidx.media3.exoplayer.audio.DefaultAudioSink {
+    android.media.AudioTrack audioTrack;
+}

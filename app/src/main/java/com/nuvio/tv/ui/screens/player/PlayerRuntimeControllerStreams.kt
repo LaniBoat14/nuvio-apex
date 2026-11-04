@@ -985,6 +985,26 @@ internal fun PlayerRuntimeController.switchToSourceStream(
         stream.behaviorHints?.proxyHeaders?.request
     )
 
+    // The URL and headers are final here and the player is still 1-3 s away
+    // from opening the datasource, so start chunk 0 now. Fresh presses do not
+    // call this.
+    //
+    // Settings are pushed first, from the cached snapshot (a datastore read
+    // would use up the head start). If the snapshot is stale the session is
+    // keyed on the wrong geometry, the player declines to adopt it and the
+    // path falls back to a normal open.
+    lastAppliedPlayerSettings?.let { cachedSettings ->
+        applyMediaSourceFactorySettings(cachedSettings)
+        runCatching {
+            mediaSourceFactory.prestartChunk0(
+                url = url,
+                headers = newHeaders,
+                filename = stream.behaviorHints?.filename
+            )
+        }
+    }
+
+
     resetLoadingOverlayForNewStream()
     releasePlayer(flushPlaybackState = false)
 
@@ -1654,6 +1674,26 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
     val newHeaders = PlayerMediaSourceFactory.sanitizeHeaders(
         stream.behaviorHints?.proxyHeaders?.request
     )
+
+    // The URL and headers are final here and the player is still 1-3 s away
+    // from opening the datasource, so start chunk 0 now. Fresh presses do not
+    // call this.
+    //
+    // Settings are pushed first, from the cached snapshot (a datastore read
+    // would use up the head start). If the snapshot is stale the session is
+    // keyed on the wrong geometry, the player declines to adopt it and the
+    // path falls back to a normal open.
+    lastAppliedPlayerSettings?.let { cachedSettings ->
+        applyMediaSourceFactorySettings(cachedSettings)
+        runCatching {
+            mediaSourceFactory.prestartChunk0(
+                url = url,
+                headers = newHeaders,
+                filename = stream.behaviorHints?.filename
+            )
+        }
+    }
+
     val targetVideo = forcedTargetVideo
         ?: _uiState.value.episodes.firstOrNull { it.id == _uiState.value.episodeStreamsForVideoId }
 
@@ -1678,6 +1718,8 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
         persistSelectedStreamForReuse(stream = stream, url = playbackUrl, headers = playbackHeaders)
     }
     persistedTrackPreference = null
+    losslessAudioDefaultAppliedForStream = false
+    persistedAudioPreferenceSeenForStream = false
     subtitleDisabledByPersistedPreference = false
     subtitleAddonRestoredByPersistedPreference = false
     pendingRestoredAddonSubtitle = null
@@ -1801,6 +1843,8 @@ private fun PlayerRuntimeController.switchToEpisodeStreamCommon(
     currentFilename = stream.behaviorHints?.filename
 
     persistedTrackPreference = null
+    losslessAudioDefaultAppliedForStream = false
+    persistedAudioPreferenceSeenForStream = false
     subtitleDisabledByPersistedPreference = false
     subtitleAddonRestoredByPersistedPreference = false
     pendingRestoredAddonSubtitle = null
@@ -1809,6 +1853,7 @@ private fun PlayerRuntimeController.switchToEpisodeStreamCommon(
     hasRetriedCurrentStreamAfterUnexpectedNpe = false
     hasRetriedCurrentStreamAfterMediaPeriodHolderCrash = false
 
+    targetVideo?.runtime?.let { expectedRuntimeMinutes = it }
     currentVideoId = targetVideo?.id ?: _uiState.value.episodeStreamsForVideoId ?: currentVideoId
     currentSeason = targetVideo?.season ?: _uiState.value.episodeStreamsSeason ?: currentSeason
     currentEpisode = targetVideo?.episode ?: _uiState.value.episodeStreamsEpisode ?: currentEpisode
