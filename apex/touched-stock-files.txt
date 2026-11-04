@@ -1,0 +1,3 @@
+# Every stock Nuvio b10 file Apex modifies or deletes must be listed here and explained in PATCHES.md.
+# scripts/apex_purity.py fails the build for any other modified or deleted stock file.
+app/build.gradle.kts
