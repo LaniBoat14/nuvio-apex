@@ -588,6 +588,11 @@ class PlaybackSettingsViewModel @Inject constructor(
         playerSettingsDataStore.setVodCacheSizeMb(mb)
     }
 
+    suspend fun setAutoSpeedupEnabled(enabled: Boolean) {
+        com.nuvio.tv.core.network.PlaybackSocketFactory.windowEnabled = enabled
+        playerSettingsDataStore.setAutoSpeedupEnabled(enabled)
+    }
+
     suspend fun setNuvioPerformanceModeEnabled(enabled: Boolean) {
         playerSettingsDataStore.setNuvioPerformanceModeEnabled(enabled)
     }

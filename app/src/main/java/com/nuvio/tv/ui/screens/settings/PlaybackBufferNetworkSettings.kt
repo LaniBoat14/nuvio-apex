@@ -93,6 +93,15 @@ internal fun PlaybackBufferNetworkSection(
 
     SettingsSectionLabel(text = stringResource(R.string.playback_network_label))
     SettingsToggleRow(
+        title = stringResource(R.string.playback_net_auto_speedup),
+        subtitle = stringResource(R.string.playback_net_auto_speedup_sub),
+        checked = settings.autoSpeedupEnabled,
+        onToggle = { onUpdate { setAutoSpeedupEnabled(!settings.autoSpeedupEnabled) } }
+    )
+    if (settings.autoSpeedupEnabled && settings.parallelNetworkEnabled) {
+        SettingsNote(text = stringResource(R.string.playback_net_auto_speedup_custom_note))
+    }
+    SettingsToggleRow(
         title = stringResource(R.string.playback_net_custom),
         subtitle = stringResource(R.string.playback_net_custom_sub),
         checked = settings.parallelNetworkEnabled,
