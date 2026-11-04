@@ -32,7 +32,8 @@ import com.nuvio.tv.ui.util.languageCodeToName
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import com.nuvio.tv.ui.screens.player.NuvioExoPlayerPerformanceHelper
-import com.nuvio.tv.ui.screens.settings.MemoryBudget
+import com.nuvio.tv.core.player.BufferSizing
+import com.nuvio.tv.ui.screens.settings.ArcMemoryBudget
 
 /**
  * Available subtitle languages
@@ -1287,8 +1288,12 @@ class PlayerSettingsDataStore @Inject constructor(
                 bufferBudgetManaged = prefs[bufferBudgetManagedKey] ?: PlayerSettings.DEFAULT_BUFFER_BUDGET_MANAGED,
                 parallelConnectionCount = run {
                     val isNativeMemory = isNativeMemoryActive(prefs)
-                    val defaultConnectionCount = PlayerSettings.DEFAULT_PARALLEL_CONNECTION_COUNT
-                    val maxConnectionCount = if (isNativeMemory) 16 else PlayerSettings.MAX_PARALLEL_CONNECTION_COUNT
+                    val defaultConnectionCount = BufferSizing.defaultConnectionCount(
+                        NuvioExoPlayerPerformanceHelper.getDevicePhysicalRamBytes(context),
+                        isNativeMemory,
+                        PlayerSettings.DEFAULT_PARALLEL_CONNECTION_COUNT
+                    )
+                    val maxConnectionCount = PlayerSettings.maxParallelConnectionCount(isNativeMemory)
                     (prefs[parallelConnectionCountKey] ?: defaultConnectionCount).coerceIn(PlayerSettings.MIN_PARALLEL_CONNECTION_COUNT, maxConnectionCount)
                 },
                 parallelChunkSizeKb = run {
@@ -2184,21 +2189,15 @@ class PlayerSettingsDataStore @Inject constructor(
             prefs[maxBufferMsKey] = BufferSettings.DEFAULT_MAX_BUFFER_MS
             prefs[bufferForPlaybackMsKey] = BufferSettings.DEFAULT_BUFFER_FOR_PLAYBACK_MS
             prefs[bufferForPlaybackAfterRebufferMsKey] = BufferSettings.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS
-            if (nativeEnabled) {
-                val safeLimitMb = NuvioExoPlayerPerformanceHelper.getSafeNativeMemoryLimitMb(context)
-                prefs[targetBufferSizeMbKey] =
-                    NuvioExoPlayerPerformanceHelper.DEFAULT_NUVIO_TARGET_BUFFER_MB
-                        .coerceAtMost(safeLimitMb)
-                prefs[backBufferDurationMsKey] =
-                    NuvioExoPlayerPerformanceHelper.DEFAULT_NUVIO_BACK_BUFFER_MS
-                prefs[allowLargeTargetBufferKey] = false
-                prefs[bufferBudgetManagedKey] = false
+            // The app sizes the buffer again; a Target buffer size set earlier stays for when Managed is turned off.
+            prefs[backBufferDurationMsKey] = if (nativeEnabled) {
+                NuvioExoPlayerPerformanceHelper.DEFAULT_NUVIO_BACK_BUFFER_MS
             } else {
-                prefs[targetBufferSizeMbKey] = BufferSettings.DEFAULT_TARGET_BUFFER_SIZE_MB
-                prefs[backBufferDurationMsKey] = BufferSettings.DEFAULT_BACK_BUFFER_DURATION_MS
-                prefs[allowLargeTargetBufferKey] = false
-                prefs[bufferBudgetManagedKey] = true
+                BufferSettings.DEFAULT_BACK_BUFFER_DURATION_MS
             }
+            prefs[allowLargeTargetBufferKey] = false
+            capTargetToStandardRange(prefs)
+            prefs[bufferBudgetManagedKey] = true
             prefs[retainBackBufferFromKeyframeKey] = false
             // VOD cache is grouped with the playback buffer section in the UI
             // (both extend seek-back smoothness), so reset its values here too.
@@ -2239,32 +2238,33 @@ class PlayerSettingsDataStore @Inject constructor(
         store().edit { it[parallelNetworkEnabledKey] = enabled }
     }
 
-    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     suspend fun setAllowLargeTargetBuffer(enabled: Boolean) {
         store().edit { prefs ->
             prefs[allowLargeTargetBufferKey] = enabled
-            if (!enabled) {
-                val isNativeMemory = isNativeMemoryActive(prefs)
-                val safeLimitMb = if (isNativeMemory) {
-                    NuvioExoPlayerPerformanceHelper.getSafeNativeMemoryLimitMb(context)
-                } else {
-                    val parallelNetworkEnabled = prefs[parallelNetworkEnabledKey] ?: false
-                    val useParallelConnections = prefs[useParallelConnectionsKey] ?: false
-                    val connectionCount = prefs[parallelConnectionCountKey] ?: 2
-                    val chunkSizeKb = prefs[parallelChunkSizeKbKey] ?: ((prefs[parallelChunkSizeMbKey] ?: 16) * 1024)
-                    val chunkSizeMb = Math.ceil(chunkSizeKb / 1024.0).toInt()
-                    val parallelOverheadMb = if (parallelNetworkEnabled && useParallelConnections) {
-                        MemoryBudget.parallelOverheadMb(connectionCount, chunkSizeMb)
-                    } else {
-                        0
-                    }
-                    MemoryBudget.maxBufferMb(parallelOverheadMb)
-                }
-                val currentSize = prefs[targetBufferSizeMbKey] ?: BufferSettings.DEFAULT_TARGET_BUFFER_SIZE_MB
-                if (currentSize > safeLimitMb) {
-                    prefs[targetBufferSizeMbKey] = safeLimitMb
-                }
+            if (!enabled) capTargetToStandardRange(prefs)
+        }
+    }
+
+    private fun capTargetToStandardRange(prefs: androidx.datastore.preferences.core.MutablePreferences) {
+        val isNativeMemory = isNativeMemoryActive(prefs)
+        val safeLimitMb = if (isNativeMemory) {
+            NuvioExoPlayerPerformanceHelper.getSafeNativeMemoryLimitMb(context)
+        } else {
+            val parallelNetworkEnabled = prefs[parallelNetworkEnabledKey] ?: false
+            val useParallelConnections = prefs[useParallelConnectionsKey] ?: false
+            val connectionCount = prefs[parallelConnectionCountKey] ?: 2
+            val chunkSizeKb = prefs[parallelChunkSizeKbKey] ?: ((prefs[parallelChunkSizeMbKey] ?: 16) * 1024)
+            val chunkSizeMb = Math.ceil(chunkSizeKb / 1024.0).toInt()
+            val parallelOverheadMb = if (parallelNetworkEnabled && useParallelConnections) {
+                ArcMemoryBudget.parallelOverheadMb(connectionCount, chunkSizeMb)
+            } else {
+                0
             }
+            ArcMemoryBudget.maxBufferMb(parallelOverheadMb)
+        }
+        val currentSize = prefs[targetBufferSizeMbKey] ?: BufferSettings.DEFAULT_TARGET_BUFFER_SIZE_MB
+        if (currentSize > safeLimitMb) {
+            prefs[targetBufferSizeMbKey] = safeLimitMb
         }
     }
     suspend fun setBufferBudgetManaged(enabled: Boolean) {
@@ -2275,9 +2275,10 @@ class PlayerSettingsDataStore @Inject constructor(
     }
     suspend fun setParallelConnectionCount(count: Int) {
         store().edit { prefs ->
-            val isNativeMemory = isNativeMemoryActive(prefs)
-            val maxCount = if (isNativeMemory) 16 else PlayerSettings.MAX_PARALLEL_CONNECTION_COUNT
-            prefs[parallelConnectionCountKey] = count.coerceIn(PlayerSettings.MIN_PARALLEL_CONNECTION_COUNT, maxCount)
+            prefs[parallelConnectionCountKey] = count.coerceIn(
+                PlayerSettings.MIN_PARALLEL_CONNECTION_COUNT,
+                PlayerSettings.maxParallelConnectionCount(isNativeMemoryActive(prefs))
+            )
         }
     }
     suspend fun setParallelChunkSizeKb(kb: Int) { store().edit { prefs -> prefs[parallelChunkSizeKbKey] = kb.coerceIn(PlayerSettings.MIN_PARALLEL_CHUNK_SIZE_KB, PlayerSettings.MAX_PARALLEL_CHUNK_SIZE_KB); prefs.remove(parallelChunkSizeMbKey) } }
@@ -2318,24 +2319,24 @@ class PlayerSettingsDataStore @Inject constructor(
         store().edit { prefs ->
             prefs[nuvioPerformanceModeEnabledKey] = actualEnabled
             if (actualEnabled) {
-                val safeLimitMb = NuvioExoPlayerPerformanceHelper.getSafeNativeMemoryLimitMb(context)
-                prefs[minBufferMsKey] = BufferSettings.DEFAULT_MIN_BUFFER_MS
-                prefs[maxBufferMsKey] = BufferSettings.DEFAULT_MAX_BUFFER_MS
-                prefs[bufferForPlaybackMsKey] = BufferSettings.DEFAULT_BUFFER_FOR_PLAYBACK_MS
-                prefs[bufferForPlaybackAfterRebufferMsKey] = BufferSettings.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS
-                // The tier limit is the ceiling, not the value to start at, so seed the native
-                // default and let it be clamped on devices whose tier sits below it.
-                prefs[targetBufferSizeMbKey] =
-                    NuvioExoPlayerPerformanceHelper.DEFAULT_NUVIO_TARGET_BUFFER_MB
-                        .coerceAtMost(safeLimitMb)
-                prefs[backBufferDurationMsKey] =
-                    NuvioExoPlayerPerformanceHelper.DEFAULT_NUVIO_BACK_BUFFER_MS
-                prefs[allowLargeTargetBufferKey] = false
-                prefs[bufferBudgetManagedKey] = false
-                prefs[useParallelConnectionsKey] = PlayerSettings.DEFAULT_USE_PARALLEL_CONNECTIONS
-                prefs[parallelConnectionCountKey] = PlayerSettings.DEFAULT_PARALLEL_CONNECTION_COUNT
-                prefs[parallelChunkSizeKbKey] = PlayerSettings.DEFAULT_PARALLEL_CHUNK_SIZE_KB
+                val presetConnections = BufferSizing.defaultConnectionCount(
+                    NuvioExoPlayerPerformanceHelper.getDevicePhysicalRamBytes(context),
+                    nativeMemory = true,
+                    fallback = PlayerSettings.DEFAULT_PARALLEL_CONNECTION_COUNT
+                )
+                prefs[minBufferMsKey] = 200_000
+                prefs[maxBufferMsKey] = 280_000
+                prefs[bufferForPlaybackMsKey] = 1_500
+                prefs[bufferForPlaybackAfterRebufferMsKey] = 1_500
+                prefs[backBufferDurationMsKey] = 12_000
+                prefs[useParallelConnectionsKey] = true
+                prefs[parallelConnectionCountKey] = presetConnections
+                prefs[parallelChunkSizeKbKey] = 16 * 1024
                 prefs.remove(parallelChunkSizeMbKey)
+                // The app sizes the buffer from free memory; a size the user set stays for when Managed is turned off.
+                prefs[allowLargeTargetBufferKey] = false
+                capTargetToStandardRange(prefs)
+                prefs[bufferBudgetManagedKey] = true
             } else {
                 prefs[minBufferMsKey] = BufferSettings.DEFAULT_MIN_BUFFER_MS
                 prefs[maxBufferMsKey] = BufferSettings.DEFAULT_MAX_BUFFER_MS

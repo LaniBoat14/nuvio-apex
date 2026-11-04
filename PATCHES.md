@@ -68,6 +68,7 @@ Rule: nothing outside this ledger differs from stock. `python3 apex/apex_purity.
 
 | File | Why |
 |---|---|
+| `app/src/main/java/com/nuvio/tv/ui/screens/settings/ArcMemoryBudget.kt` (added) | Full Arc memory budget (native-aware sizing, connection-based chunk ceilings), alongside stock's untouched `MemoryBudget`. The Buffer and Network screen, view model, saved settings and engine all use it so the numbers agree. |
 | `app/src/full/res/values/apex_identity.xml` | Launcher label "Nuvio Apex" (default locale). |
 | `app/src/main/res/values/apex_strings.xml` | Apex-only strings (Automatic speed-up). |
 | 44 engine files under `core/` and `ui/screens/player/`, `ui/screens/settings/ArcMemoryBudget.kt` | Arc network engine, copied from Arc; `ArcMemoryBudget` keeps stock `MemoryBudget` untouched. |

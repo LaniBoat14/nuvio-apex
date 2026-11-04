@@ -1202,7 +1202,7 @@ internal class ParallelRangeDataSource(
     // Memory-tiered chunk cap: low-RAM devices keep a ceiling of
     // connections + 2; high-RAM gets two extra chunks of LRU headroom.
     private val sessionChunkCap: Int = effectivePrefetchDepth +
-        if (com.nuvio.tv.ui.screens.settings.MemoryBudget.isLowRamTier) 2 else 4
+        if (com.nuvio.tv.ui.screens.settings.ArcMemoryBudget.isLowRamTier) 2 else 4
 
     override fun open(dataSpec: DataSpec): Long {
         if (resources.released) throw IOException("Diagnostic session is closed")
