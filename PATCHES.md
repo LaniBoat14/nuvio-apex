@@ -59,6 +59,10 @@ Rule: nothing outside this ledger differs from stock. `python3 apex/apex_purity.
 | `app/src/main/java/com/nuvio/tv/ui/screens/settings/PlaybackSettingsModel.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
 | `app/src/main/java/com/nuvio/tv/ui/screens/settings/PlaybackVideoSettings.kt` | Lossless audio: surround resolution, IEC/system passthrough, denied-codec handling, audio settings and tracks. |
 | `app/src/main/baseline-prof.txt` | Wildcard rules for the playback path (engine, network, IEC, stats) so Arc code is precompiled like the stock player. |
+| `app/src/test/java/com/nuvio/tv/core/player/DolbyVisionBaseLayerPolicyTest.kt` | Test updated to match the replaced code (Dolby Vision policy, Arc engine) or to run without CI Trakt credentials. |
+| `app/src/test/java/com/nuvio/tv/data/repository/TraktAuthServiceTest.kt` | Test updated to match the replaced code (Dolby Vision policy, Arc engine) or to run without CI Trakt credentials. |
+| `app/src/test/java/com/nuvio/tv/ui/screens/player/NuvioExoPlayerPerformanceHelperTest.kt` | Test updated to match the replaced code (Dolby Vision policy, Arc engine) or to run without CI Trakt credentials. |
+| `app/src/test/java/com/nuvio/tv/ui/screens/player/ParallelRangeChunkLeaseTest.kt` | Test updated to match the replaced code (Dolby Vision policy, Arc engine) or to run without CI Trakt credentials. |
 
 ## Added files
 
