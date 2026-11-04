@@ -11,7 +11,6 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.upstream.DefaultAllocator
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import com.nuvio.tv.data.local.PlayerSettings
-import com.nuvio.tv.ui.screens.settings.MemoryBudget
 import com.nuvio.tv.ui.screens.settings.ArcMemoryBudget
 
 /**
@@ -144,18 +143,18 @@ object NuvioExoPlayerPerformanceHelper {
         val effectiveBufferMb = when {
             settings.nuvioPerformanceModeEnabled -> {
                 if (customBuffers && !settings.bufferBudgetManaged) {
-                    MemoryBudget.effectiveBufferMb(bufferSettings.targetBufferSizeMb)
+                    ArcMemoryBudget.effectiveBufferMb(bufferSettings.targetBufferSizeMb)
                 } else {
                     autoMb
                 }
             }
             customBuffers -> {
                 if (settings.bufferBudgetManaged) ArcMemoryBudget.autoBudgetMb
-                else MemoryBudget.effectiveBufferMb(bufferSettings.targetBufferSizeMb)
+                else ArcMemoryBudget.effectiveBufferMb(bufferSettings.targetBufferSizeMb)
             }
-            else -> MemoryBudget.defaultBufferSizeMb
+            else -> ArcMemoryBudget.defaultBufferSizeMb
         }
-        calculatedMemoryUsageMb = MemoryBudget.totalUsageMb(
+        calculatedMemoryUsageMb = ArcMemoryBudget.totalUsageMb(
             effectiveBufferMb,
             settings.parallelConnectionCount,
             Math.ceil(settings.parallelChunkSizeKb / 1024.0).toInt(),
@@ -364,7 +363,7 @@ object NuvioExoPlayerPerformanceHelper {
     ): DefaultLoadControl {
         return if (enabled) {
             val effectiveTargetBufferMb = (targetBufferSizeMb - chunkOverheadMb)
-                .coerceAtLeast(MemoryBudget.MIN_BUFFER_MB)
+                .coerceAtLeast(ArcMemoryBudget.MIN_BUFFER_MB)
             val targetBufferBytes = (effectiveTargetBufferMb.toLong() * 1024L * 1024L)
                 .coerceAtMost(Int.MAX_VALUE.toLong())
                 .toInt()

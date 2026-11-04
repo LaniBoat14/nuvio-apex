@@ -79,7 +79,6 @@ import com.nuvio.tv.core.player.DoviBridge
 import com.nuvio.tv.core.player.LastPlaybackDiagnostics
 import com.nuvio.tv.core.tracking.TrackingScrobbleAction
 import com.nuvio.tv.core.util.findCause
-import com.nuvio.tv.ui.screens.settings.MemoryBudget
 import com.nuvio.tv.data.local.AudioLanguageOption
 import com.nuvio.tv.data.local.Dv7HandlingMode
 import com.nuvio.tv.data.local.FrameRateMatchingMode
@@ -594,7 +593,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                 currentParallelChunkOverheadMb =
                     if (playerSettings.parallelNetworkEnabled && playerSettings.useParallelConnections) {
                         val chunkMb = Math.ceil(ArcMemoryBudget.customChunkKb(context, playerSettings) / 1024.0).toInt()
-                        MemoryBudget.parallelOverheadMb(playerSettings.parallelConnectionCount, chunkMb)
+                        ArcMemoryBudget.parallelOverheadMb(playerSettings.parallelConnectionCount, chunkMb)
                     } else {
                         0
                     }
@@ -605,11 +604,11 @@ internal fun PlayerRuntimeController.initializePlayer(
                     val free = if (ArcMemoryBudget.offHeapBuffers) BufferSizing.read(context) else null
                     currentManagedBudgetMb = BufferSizing.sizedBudgetMb(boxMb, free, 0, heldBufferMb, fourKInAppMemory)
                     sizing = BufferSizing.describe(boxMb, currentManagedBudgetMb, free, 0, heldBufferMb, fourKInAppMemory) + " "
-                    unsizedBudgetMb = (boxMb - currentParallelChunkOverheadMb).coerceAtLeast(MemoryBudget.MIN_BUFFER_MB)
-                    (currentManagedBudgetMb - currentParallelChunkOverheadMb).coerceAtLeast(MemoryBudget.MIN_BUFFER_MB)
+                    unsizedBudgetMb = (boxMb - currentParallelChunkOverheadMb).coerceAtLeast(ArcMemoryBudget.MIN_BUFFER_MB)
+                    (currentManagedBudgetMb - currentParallelChunkOverheadMb).coerceAtLeast(ArcMemoryBudget.MIN_BUFFER_MB)
                 } else {
-                    MemoryBudget.effectiveBufferMb(bufferSettings.targetBufferSizeMb)
-                        .coerceAtLeast(MemoryBudget.MIN_BUFFER_MB)
+                    ArcMemoryBudget.effectiveBufferMb(bufferSettings.targetBufferSizeMb)
+                        .coerceAtLeast(ArcMemoryBudget.MIN_BUFFER_MB)
                 }
                 customBufferBudgetBytes = budgetMbEffective.toLong() * 1024L * 1024L
                 val referenceBudgetBytes = unsizedBudgetMb.coerceAtLeast(budgetMbEffective).toLong() * 1024L * 1024L
@@ -628,7 +627,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                 Log.i(
                     PlayerRuntimeController.TAG,
                     "BUFFER_GATE: engine=exo-custom master=on " +
-                            "lowRam=${MemoryBudget.isLowRamTier} " +
+                            "lowRam=${ArcMemoryBudget.isLowRamTier} " +
                             "offHeap=${ArcMemoryBudget.offHeapBuffers} " +
                             "parallelOverheadMb=$currentParallelChunkOverheadMb " +
                             "allowLarge=${playerSettings.allowLargeTargetBuffer} " +
@@ -3149,12 +3148,12 @@ private fun PlayerRuntimeController.recordFirstFrameDiagnostics(
     currentBitrateAwareLoadControl?.let { lc ->
         val budgetManaged = playerSettings.bufferBudgetManaged
         val keepZeroForDv7 = budgetManaged && conversionSucceeded > 0L &&
-                MemoryBudget.isLowRamTier
+                ArcMemoryBudget.isLowRamTier
         // Only the BUDGET can be tightened at runtime. The back buffer was fixed when
         // this player was constructed and media3 will not re-read it, so it is reported
         // as built rather than as intended.
         val conversionMb = (ArcMemoryBudget.conversionBudgetMb(currentManagedBudgetMb) - currentParallelChunkOverheadMb)
-            .coerceAtLeast(MemoryBudget.MIN_BUFFER_MB)
+            .coerceAtLeast(ArcMemoryBudget.MIN_BUFFER_MB)
         if (keepZeroForDv7) {
             lc.setBudgetBytesOverride(conversionMb.toLong() * 1024L * 1024L)
             bufferMemoryKeeper?.onBudgetLowered()
@@ -3162,14 +3161,14 @@ private fun PlayerRuntimeController.recordFirstFrameDiagnostics(
         Log.i(
             PlayerRuntimeController.TAG,
             "BACK_BUFFER_RESOLVED: dvConversion=$dvConversionOccurred " +
-                    "lowRam=${MemoryBudget.isLowRamTier} " +
+                    "lowRam=${ArcMemoryBudget.isLowRamTier} " +
                     "effectiveBackBufferMs=$effectiveBackBufferDurationMs " +
                     "managed=$budgetManaged " +
                     "budgetMb=${when {
                         keepZeroForDv7 -> conversionMb
                         budgetManaged -> (currentManagedBudgetMb - currentParallelChunkOverheadMb)
-                            .coerceAtLeast(MemoryBudget.MIN_BUFFER_MB)
-                        else -> MemoryBudget.effectiveBufferMb(playerSettings.bufferSettings.targetBufferSizeMb)
+                            .coerceAtLeast(ArcMemoryBudget.MIN_BUFFER_MB)
+                        else -> ArcMemoryBudget.effectiveBufferMb(playerSettings.bufferSettings.targetBufferSizeMb)
                     }} " +
                     "host=${currentStreamUrl.safeHost()}"
         )
