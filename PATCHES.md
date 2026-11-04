@@ -3,7 +3,7 @@
 Base: stock NuvioTV 1.1.0-beta.10 (`99fbd65d8`). Apex = base + four additive features ported from Nuvio Arc
 (`ysosrs123/NuvioTV-Fork` @ `ccfd1d7`): network engine, glass analytics overlay, lossless audio, Dolby Vision.
 
-Rule: nothing outside this ledger differs from stock. `python3 scripts/apex_purity.py` enforces it.
+Rule: nothing outside this ledger differs from stock. `python3 apex/apex_purity.py` enforces it.
 
 ## Touched stock files
 
@@ -16,4 +16,4 @@ Rule: nothing outside this ledger differs from stock. `python3 scripts/apex_puri
 | File | Why |
 |---|---|
 | `app/src/full/res/values/apex_identity.xml` | Launcher label "Nuvio Apex" (default locale). |
-| `apex/`, `scripts/apex_purity.py`, `.github/workflows/apex-build.yml` | Guard rails and CI. |
+| `apex/`, `apex/apex_purity.py`, `.github/workflows/apex-build.yml` | Guard rails and CI. |
