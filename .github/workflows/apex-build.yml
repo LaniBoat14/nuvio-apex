@@ -27,7 +27,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Stock purity
-        run: python3 scripts/apex_purity.py
+        run: python3 apex/apex_purity.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
