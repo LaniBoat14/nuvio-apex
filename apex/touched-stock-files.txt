@@ -1,4 +1,4 @@
-# Every stock Nuvio b10 file Apex modifies or deletes must be listed here and explained in PATCHES.md.
+# Every stock Nuvio file Apex modifies or deletes must be listed here and explained in PATCHES.md.
 # scripts/apex_purity.py fails the build for any other modified or deleted stock file.
 app/build.gradle.kts
 .github/workflows/android-release.yml
@@ -61,3 +61,14 @@ app/src/test/java/com/nuvio/tv/core/player/DolbyVisionBaseLayerPolicyTest.kt
 app/src/test/java/com/nuvio/tv/data/repository/TraktAuthServiceTest.kt
 app/src/test/java/com/nuvio/tv/ui/screens/player/NuvioExoPlayerPerformanceHelperTest.kt
 app/src/test/java/com/nuvio/tv/ui/screens/player/ParallelRangeChunkLeaseTest.kt
+app/src/main/java/com/nuvio/tv/ui/screens/settings/AboutScreen.kt
+app/src/main/res/drawable/ic_launcher.png
+app/src/main/res/drawable/tv_banner.png
+app/src/main/res/drawable-nodpi/app_logo_mark.png
+app/src/main/res/drawable-nodpi/tv_banner.png
+app/src/main/res/mipmap-xhdpi/banner.png
+app/src/main/res/mipmap-mdpi/ic_launcher.png
+app/src/main/res/mipmap-hdpi/ic_launcher.png
+app/src/main/res/mipmap-xhdpi/ic_launcher.png
+app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+app/src/main/res/mipmap-xxxhdpi/ic_launcher.png

@@ -135,8 +135,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1073001
-        versionName = "1.1.0-beta.10.apex.1"
+        versionCode = 1074001
+        versionName = "0.1.0"
 
         buildConfigField("String", "PARENTAL_GUIDE_API_URL", "\"${localProperties.getProperty("PARENTAL_GUIDE_API_URL", "")}\"")
         buildConfigField("String", "INTRODB_API_URL", "\"${localProperties.getProperty("INTRODB_API_URL", "")}\"")
@@ -178,7 +178,9 @@ android {
 
         // In-app updater (GitHub Releases)
         buildConfigField("String", "GITHUB_OWNER", "\"LaniBoat14\"")
-        buildConfigField("String", "GITHUB_REPO", "\"nuvio-apex\"")
+        buildConfigField("String", "GITHUB_REPO", "\"nuvio-apex-releases\"")
+        // The Nuvio release this build is rebased on; shown in About. Change when rebasing onto a new Nuvio beta.
+        buildConfigField("String", "NUVIO_BASE", "\"1.1.0-beta.11\"")
     }
 
     flavorDimensions += "distribution"

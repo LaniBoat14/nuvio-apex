@@ -138,6 +138,13 @@ fun AboutSettingsContent(
                                 textAlign = TextAlign.Center
                             )
 
+                            Text(
+                                text = "Nuvio Apex · based on Nuvio ${BuildConfig.NUVIO_BASE}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = NuvioTheme.colors.TextSecondary,
+                                textAlign = TextAlign.Center
+                            )
+
                             Spacer(modifier = Modifier.height(NuvioTheme.spacing.xxs))
 
                             if (AppFeaturePolicy.inAppUpdatesEnabled) {

@@ -1,6 +1,6 @@
 # Nuvio Apex patch ledger
 
-Base: stock NuvioTV 1.1.0-beta.10 (`99fbd65d8`). Apex = base + four additive features ported from Nuvio Arc
+Base: stock NuvioTV 1.1.0-beta.11 (`1206736fd`). Apex = base + four additive features ported from Nuvio Arc
 (`ysosrs123/NuvioTV-Fork` @ `ccfd1d7`): network engine, glass analytics overlay, lossless audio, Dolby Vision.
 
 Rule: nothing outside this ledger differs from stock. `python3 apex/apex_purity.py` enforces it.
@@ -9,7 +9,9 @@ Rule: nothing outside this ledger differs from stock. `python3 apex/apex_purity.
 
 | File | Why |
 |---|---|
-| `app/build.gradle.kts` | Own application id `com.jeffrey.nuvioapex`, version `1.1.0-beta.10.apex.1` (code 1073001), update feed `LaniBoat14/nuvio-apex`, optional `-PapexArm32Only` ABI split. |
+| `app/build.gradle.kts` | Own application id `com.jeffrey.nuvioapex`, Apex version scheme (`versionName` 0.1.x, `versionCode` = stock code x 1000 + n), `NUVIO_BASE` field naming the Nuvio release this build is rebased on, update feed `LaniBoat14/nuvio-apex-releases` (public releases repo; source stays private), optional `-PapexArm32Only` ABI split. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/settings/AboutScreen.kt` | Adds one About line, "Nuvio Apex · based on Nuvio `NUVIO_BASE`". |
+| `app/src/main/res/drawable/ic_launcher.png`, `app/src/main/res/drawable/tv_banner.png`, `app/src/main/res/drawable-nodpi/app_logo_mark.png`, `app/src/main/res/drawable-nodpi/tv_banner.png`, `app/src/main/res/mipmap-xhdpi/banner.png`, `app/src/main/res/mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}/ic_launcher.png` | Apex icon and banner: stock's mark recolored (gold, orange, coral) so Apex is told apart from stock and Flow on the same box. |
 | `.github/workflows/*.yml` (8 stock files) | Removed: stock release, issue-triage and PR-comment automation. They belong to the upstream project (scheduled bots, release publishing) and must not run in Apex. Apex has its own `apex-build.yml`. Listed individually in `apex/touched-stock-files.txt`: android-release, close-stale-issues, close-unlabeled-issues, pr-full-debug-build-comment, pr-full-debug-build, pr-template-check, stale-needs-info, triage-needs-info. |
 | `libmpv-android` (gitlink) | Removed: upstream commits a submodule entry with no `.gitmodules`, which breaks `actions/checkout`. Nothing in the build references it (mpv comes from the prebuilt AAR). |
 | `app/src/main/java/com/nuvio/tv/data/local/PlayerSettingsDataStore.kt` | Adds the `autoSpeedupEnabled` setting (field, key, reader, setter). |
