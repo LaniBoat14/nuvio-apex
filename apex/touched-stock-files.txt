@@ -72,3 +72,4 @@ app/src/main/res/mipmap-hdpi/ic_launcher.png
 app/src/main/res/mipmap-xhdpi/ic_launcher.png
 app/src/main/res/mipmap-xxhdpi/ic_launcher.png
 app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+README.md

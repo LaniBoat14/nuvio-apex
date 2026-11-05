@@ -178,7 +178,7 @@ android {
 
         // In-app updater (GitHub Releases)
         buildConfigField("String", "GITHUB_OWNER", "\"LaniBoat14\"")
-        buildConfigField("String", "GITHUB_REPO", "\"nuvio-apex-releases\"")
+        buildConfigField("String", "GITHUB_REPO", "\"nuvio-apex\"")
         // The Nuvio release this build is rebased on; shown in About. Change when rebasing onto a new Nuvio beta.
         buildConfigField("String", "NUVIO_BASE", "\"1.1.0-beta.11\"")
     }
