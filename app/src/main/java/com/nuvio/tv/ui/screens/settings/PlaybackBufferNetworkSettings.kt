@@ -168,16 +168,35 @@ private fun CustomBufferControls(
         bufferSizeMb, budgetManaged, isNativeMemory, com.nuvio.tv.core.player.BufferSizing.lastPlaybackBudget
     )
     val reach = BufferSettingsNumbers.reach(playbackMb)
+    // Stock's Minimum and Maximum buffer. The engine buffers up to the larger of the two, so the maximum
+    // is never set below the minimum.
+    val maxDuration = BufferAhead.limitMs(isNativeMemory) / 1000
+    val minBufferSeconds = buffer.minBufferMs / 1000
+    val maxBufferSeconds = buffer.maxBufferMs / 1000
     val aheadSeconds = buffer.bufferAheadMs / 1000
     SliderSettingsItem(
-        title = stringResource(R.string.playback_buffer_ahead),
-        subtitle = stringResource(R.string.playback_buffer_ahead_sub),
-        value = aheadSeconds,
-        valueText = "${aheadSeconds}s",
-        minValue = BufferAhead.MIN_MS / 1000,
-        maxValue = BufferAhead.limitMs(isNativeMemory) / 1000,
+        title = stringResource(R.string.playback_buffer_min),
+        subtitle = stringResource(R.string.playback_buffer_min_sub),
+        value = minBufferSeconds,
+        valueText = "${minBufferSeconds}s",
+        minValue = 5,
+        maxValue = maxDuration,
         step = durationStep,
-        onValueChange = { seconds -> onUpdate { setBufferAheadMs(seconds * 1000) } }
+        onValueChange = { seconds -> onUpdate { setBufferMinBufferMs(seconds * 1000) } }
+    )
+    SliderSettingsItem(
+        title = stringResource(R.string.playback_buffer_max),
+        subtitle = stringResource(R.string.playback_buffer_max_sub),
+        value = maxBufferSeconds,
+        valueText = if (maxBufferSeconds == minBufferSeconds) {
+            stringResource(R.string.playback_buffer_value_same_as_min, maxBufferSeconds)
+        } else {
+            "${maxBufferSeconds}s"
+        },
+        minValue = 5,
+        maxValue = maxDuration,
+        step = durationStep,
+        onValueChange = { seconds -> onUpdate { setBufferMaxBufferMs(maxOf(seconds, minBufferSeconds) * 1000) } }
     )
     SettingsNote(
         text = stringResource(R.string.playback_buffer_ahead_reach, reach.mb, reach.remuxSeconds, reach.webFileSeconds)

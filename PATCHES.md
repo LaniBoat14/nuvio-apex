@@ -21,7 +21,7 @@ Rule: nothing outside this ledger differs from stock. `python3 apex/apex_purity.
 | `app/src/main/java/com/nuvio/tv/ui/screens/player/PlayerRuntimeControllerInitialization.kt` | Load-control build replaced by the Arc sized-buffer path (budget, top-up, start cushion), `applyMediaSourceFactorySettings`, keeper attach, speed-up hint, seek stamp, first-frame budget tightening. |
 | `app/src/main/java/com/nuvio/tv/ui/screens/player/PlayerRuntimeControllerLifecycle.kt` | Resets the byte counter and lanes on release, defers the buffer trim off the main thread, detaches the keeper. |
 | `app/src/main/java/com/nuvio/tv/ui/screens/player/PlayerRuntimeControllerPlaybackEvents.kt` | Adds the Automatic speed-up sampler to the progress tick and the keeper tick to the 10 s buffer log. |
-| `app/src/main/java/com/nuvio/tv/ui/screens/settings/PlaybackBufferNetworkSettings.kt` | Adds the Automatic speed-up toggle to the Network section. |
+| `app/src/main/java/com/nuvio/tv/ui/screens/settings/PlaybackBufferNetworkSettings.kt` | Network section: Automatic speed-up toggle and Connections slider. Buffer section keeps stock's Minimum and Maximum buffer sliders (the engine buffers up to the larger of the two), with memory figures taken from `ArcMemoryBudget` and a note on how much playback the buffer holds. |
 | `app/src/main/java/com/nuvio/tv/ui/screens/settings/PlaybackSettingsViewModel.kt` | Adds `setAutoSpeedupEnabled`. |
 | `app/src/main/java/com/nuvio/tv/ui/screens/stream/StreamScreen.kt` | Warms the selected stream's connection at the two play call sites. |
 | `app/src/main/java/com/nuvio/tv/ui/screens/stream/StreamScreenViewModel.kt` | Adds `prewarmSelectedPlayback`. |
