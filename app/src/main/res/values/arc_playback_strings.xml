@@ -25,4 +25,5 @@
   <string name="playback_estimated_memory_parts">Estimated memory use: about %1$d MB (buffer %2$d MB + downloads %3$d MB)</string>
   <string name="playback_estimated_memory_buffer">Estimated memory use: about %1$d MB (buffer %2$d MB)</string>
   <string name="seek_thumbnails_memory_estimate">Includes seek thumbnails: up to %1$d MB</string>
+  <string name="playback_buffer_floor_note">Minimum is the buffer floor. When playback drops under it, Automatic speed-up refills as fast as the server and memory allow. Keep it well below Maximum.</string>
 </resources>

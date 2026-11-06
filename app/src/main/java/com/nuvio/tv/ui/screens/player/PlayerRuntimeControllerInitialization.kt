@@ -549,6 +549,11 @@ internal fun PlayerRuntimeController.initializePlayer(
                     BufferSizing.isSmallBox(NuvioExoPlayerPerformanceHelper.getDevicePhysicalRamBytes(context)) &&
                     !ArcMemoryBudget.videoPoolReadable()
             val topUpPieceBytes = if (parallelForSizing) chunkMbForSizing * 1024L * 1024L else BufferTopUp.DEFAULT_PIECE_BYTES
+            userBufferFloorMs = if (playerSettings.nuvioPerformanceModeEnabled || playerSettings.bufferEngineEnabled) {
+                playerSettings.bufferSettings.minBufferMs.toLong()
+            } else {
+                0L
+            }
             val loadControl = if (playerSettings.nuvioPerformanceModeEnabled) {
                 effectiveBackBufferDurationMs = NuvioExoPlayerPerformanceHelper.backBufferMs
                 currentBitrateAwareLoadControl = null

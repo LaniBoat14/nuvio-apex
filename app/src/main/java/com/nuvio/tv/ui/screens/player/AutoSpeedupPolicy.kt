@@ -171,6 +171,8 @@ internal class AutoSpeedupPolicy(
      * film's recent rate ([FilmRate]); -1 when unknown. [bufferTargetMs] = the seconds of this film the box's buffer may
      * hold (the Max buffer, or less where memory is the limit), 0 when unknown: no refill boost without it.
      * [seekAtMs] = when the user last sought (this clock), 0 for never.
+     * [floorMs] = the user's Minimum buffer while the custom playback buffer is on, 0 otherwise: the low mark follows
+     * it ([lowMarkMs]), so the refill boost starts while there is still film to cover the climb.
      */
     data class Sample(
         val nowMs: Long,
@@ -193,7 +195,8 @@ internal class AutoSpeedupPolicy(
         val playerBytes: Long = -1L,
         val bufferedMs: Long = -1L,
         val bufferTargetMs: Long = 0L,
-        val seekAtMs: Long = 0L
+        val seekAtMs: Long = 0L,
+        val floorMs: Long = 0L
     )
 
     @Volatile
@@ -597,8 +600,8 @@ internal class AutoSpeedupPolicy(
         lastBoostNote = null
         val target = s.bufferTargetMs
         if (target <= 0L) return false
-        val low = lowMarkMs(target)
-        val goal = refillGoalMs(target)
+        val low = lowMarkMs(target, s.floorMs)
+        val goal = refillGoalMs(target, low)
         val firstLook = previous == null && seekSeenMs == 0L
         val newSeek = s.seekAtMs > seekSeenMs && !firstLook
         if (s.seekAtMs > seekSeenMs) seekSeenMs = s.seekAtMs
@@ -607,11 +610,15 @@ internal class AutoSpeedupPolicy(
         if (seeked) aboveLow = false
         val dip = aboveLow && s.playing && s.loading && !s.bufferFull && s.aheadMs < low
         if (s.aheadMs >= low) aboveLow = true
+        // Early warning: not yet under the low mark, but falling fast enough to be empty within EARLY_RUNWAY_MS.
+        val early = !dip && !seeked && aboveLow && s.playing && s.loading && !s.bufferFull &&
+            s.aheadMs < low * EARLY_ZONE_FACTOR && drainRunwayMs(s) in 0L until EARLY_RUNWAY_MS
 
         val why = when {
             stalled -> "stall"
             seeked && s.aheadMs < low -> "seek"
             dip -> "dip"
+            early -> "early"
             else -> null
         }
         if (seeked || stalled || (why != null && refillFromMs < 0L)) {
@@ -674,6 +681,18 @@ internal class AutoSpeedupPolicy(
             return false
         }
         return startBoost(s, why, most, low, goal)
+    }
+
+    /**
+     * Milliseconds until the buffer is empty at the pace of the last [EARLY_WINDOW_MS], [runwayMs]; -1 when that is not
+     * known (under that much history, a seek inside it) or the buffer has stopped falling over the last
+     * [EARLY_RECENT_MS], so a refill that is already working is not mistaken for a fall.
+     */
+    private fun drainRunwayMs(s: Sample): Long {
+        val old = samples.lastOrNull { it.nowMs <= s.nowMs - EARLY_WINDOW_MS } ?: return -1L
+        val recent = samples.lastOrNull { it.nowMs <= s.nowMs - EARLY_RECENT_MS } ?: return -1L
+        if (recent.aheadMs <= s.aheadMs) return -1L
+        return runwayMs(s.aheadMs, old.aheadMs, s.nowMs - old.nowMs)
     }
 
     private fun boostSkipped(s: Sample, why: String, goalMs: Long): String {
@@ -850,10 +869,18 @@ internal class AutoSpeedupPolicy(
      * runs short again a download comes back and stays for the film.
      */
     private fun comfortable(s: Sample): Boolean {
-        if (s.aheadMs >= COMFORTABLE_AHEAD_MS) return true
+        // A raised low mark (the user's Minimum buffer) moves both lines up: no download is handed back under it.
+        val raised = s.floorMs > 0L && s.bufferTargetMs > 0L
+        val low = if (raised) lowMarkMs(s.bufferTargetMs, s.floorMs) else 0L
+        val comfortableAhead = if (raised) {
+            maxOf(COMFORTABLE_AHEAD_MS, minOf(low + COMFORTABLE_ABOVE_FLOOR_MS, s.bufferTargetMs - FULL_SLACK_MS))
+        } else {
+            COMFORTABLE_AHEAD_MS
+        }
+        if (s.aheadMs >= comfortableAhead) return true
         val from = s.nowMs - STARVE_WINDOW_MS
         if (loadingShare(from, s.nowMs) >= LOADING_PASS_PERCENT) return false
-        if (s.aheadMs >= COMFORTABLE_IDLE_AHEAD_MS) return true
+        if (s.aheadMs >= maxOf(COMFORTABLE_IDLE_AHEAD_MS, low)) return true
         return samples.any {
             it.nowMs >= from && (it.bufferFull || (it.maxBufferMs > 0L && it.aheadMs >= it.maxBufferMs - FULL_SLACK_MS))
         }
@@ -1032,11 +1059,36 @@ internal class AutoSpeedupPolicy(
         /** The film's recent scenes, carried with this margin, when that is more than [TARGET_PERCENT] % of its average. */
         const val RECENT_TARGET_PERCENT = 120
 
-        /** Under this much buffer a playing film goes straight to more requests: 40 % of what the box holds, 4 to 10 s. */
-        fun lowMarkMs(bufferTargetMs: Long): Long = (bufferTargetMs * 40 / 100).coerceIn(LOW_MARK_MIN_MS, LOW_MARK_MAX_MS)
+        /**
+         * Under this much buffer a playing film goes straight to more requests: 40 % of what the box holds, 4 to 10 s.
+         * With the user's Minimum buffer ([floorMs], 0 = none) it is that Minimum instead, when that is higher, but
+         * never above [FLOOR_CAP_PERCENT] % of what the box holds: the loader tops the buffer up to within seconds of
+         * its target, so a floor at the target would count as a dip all the time.
+         */
+        fun lowMarkMs(bufferTargetMs: Long, floorMs: Long = 0L): Long {
+            val auto = (bufferTargetMs * 40 / 100).coerceIn(LOW_MARK_MIN_MS, LOW_MARK_MAX_MS)
+            if (floorMs <= 0L || bufferTargetMs <= 0L) return auto
+            return maxOf(auto, minOf(floorMs, bufferTargetMs * FLOOR_CAP_PERCENT / 100))
+        }
 
-        /** A refill is done at this much buffer: nine tenths of what the box holds, at most [REFILL_GOAL_MAX_MS]. */
-        fun refillGoalMs(bufferTargetMs: Long): Long = minOf(bufferTargetMs * 90 / 100, REFILL_GOAL_MAX_MS)
+        /**
+         * A refill is done at this much buffer: nine tenths of what the box holds, at most [REFILL_GOAL_MAX_MS], or
+         * [FLOOR_GOAL_HEADROOM_MS] above a raised low mark ([lowMs]) so that a refill ends above the line it started under.
+         */
+        fun refillGoalMs(bufferTargetMs: Long, lowMs: Long = lowMarkMs(bufferTargetMs)): Long =
+            minOf(bufferTargetMs * 90 / 100, maxOf(REFILL_GOAL_MAX_MS, lowMs + FLOOR_GOAL_HEADROOM_MS))
+
+        /**
+         * Milliseconds until the buffer is empty at the pace it fell over the last [spanMs] ([aheadThenMs] to
+         * [aheadNowMs]); -1 when it fell by less than [EARLY_MIN_DRAIN_PERCENT] % of the time that passed, that is,
+         * the downloads are covering most of the film's pace.
+         */
+        fun runwayMs(aheadNowMs: Long, aheadThenMs: Long, spanMs: Long): Long {
+            if (spanMs <= 0L) return -1L
+            val fell = aheadThenMs - aheadNowMs
+            if (fell * 100L < spanMs * EARLY_MIN_DRAIN_PERCENT) return -1L
+            return aheadNowMs * spanMs / fell
+        }
 
         /** Bytes per second that regain [goalMs] of buffer from [aheadMs] within [REFILL_WANTED_MS] at [filmBps]. */
         fun refillRate(filmBps: Long, aheadMs: Long, goalMs: Long): Long =
@@ -1044,6 +1096,22 @@ internal class AutoSpeedupPolicy(
 
         const val LOW_MARK_MIN_MS = 4_000L
         const val LOW_MARK_MAX_MS = 10_000L
+        /** The Minimum buffer counts as the low mark up to this share of what the box holds. */
+        const val FLOOR_CAP_PERCENT = 75L
+        /** A refill for a raised low mark ends this far above it. */
+        const val FLOOR_GOAL_HEADROOM_MS = 10_000L
+        /** A raised low mark is comfortable only this far above it, so a download is not handed back under the floor. */
+        const val COMFORTABLE_ABOVE_FLOOR_MS = 5_000L
+        /**
+         * Early warning: a buffer under [EARLY_ZONE_FACTOR] times the low mark that fell over [EARLY_WINDOW_MS], and is
+         * still falling, boosts when it would be empty within [EARLY_RUNWAY_MS] at that pace, before the low mark.
+         * Falling by less than [EARLY_MIN_DRAIN_PERCENT] % of the time that passed is the downloads keeping up.
+         */
+        const val EARLY_WINDOW_MS = 8_000L
+        const val EARLY_RECENT_MS = 3_000L
+        const val EARLY_ZONE_FACTOR = 2L
+        const val EARLY_RUNWAY_MS = 20_000L
+        const val EARLY_MIN_DRAIN_PERCENT = 15L
         const val REFILL_GOAL_MAX_MS = 30_000L
         const val REFILL_WANTED_MS = 10_000L
         const val REFILL_GIVE_UP_MS = 60_000L

@@ -198,6 +198,7 @@ private fun CustomBufferControls(
         step = durationStep,
         onValueChange = { seconds -> onUpdate { setBufferMaxBufferMs(maxOf(seconds, minBufferSeconds) * 1000) } }
     )
+    SettingsNote(text = stringResource(R.string.playback_buffer_floor_note))
     SettingsNote(
         text = stringResource(R.string.playback_buffer_ahead_reach, reach.mb, reach.remuxSeconds, reach.webFileSeconds)
     )

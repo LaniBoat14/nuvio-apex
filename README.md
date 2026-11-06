@@ -22,6 +22,7 @@ Apex looks and behaves like stock Nuvio on your TV. It has its own name, icon, l
 |---|---|
 | **Network engine** | Automatic speed-up, parallel connections and adjustable chunk size, for steadier throughput on slow or uneven servers. |
 | **Buffer and Network page** | Stock's Minimum and Maximum buffer settings, with memory-aware sizing, plus the network engine's Automatic speed-up and connection controls. |
+| **Low-buffer rescue** | Your Minimum buffer is a real floor: when playback drops under it, or is about to run dry at its current pace, Automatic speed-up refills as fast as the server and memory allow. |
 | **Lossless audio** | A lossless audio output path. |
 | **Dolby Vision** | Profile 7 handling, including conversion for displays that need it. |
 | **Playback stats overlay** | Detailed live stats, opened from the analytics icon in the player. |
