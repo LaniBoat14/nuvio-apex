@@ -119,7 +119,7 @@ jobs:
           APK=app/build/outputs/apk/full/release/app-full-armeabi-v7a-release.apk
           test -f "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "$APK"
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep "package: name='com.jeffrey.nuvioapex'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep "package: name='com.nuvioapex.tv'"
           unzip -l "$APK" | grep -E "assets/dexopt/baseline.prof|assets/updater_dm/index.properties"
       - uses: actions/upload-artifact@v4
         if: inputs.stage == 'release'

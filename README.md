@@ -6,7 +6,7 @@ A personal build of [NuvioTV](https://github.com/NuvioMedia/NuvioTV) for Android
 
 </div>
 
-Apex looks and behaves like stock Nuvio on your TV. It has its own name, icon and package (`com.jeffrey.nuvioapex`), so it installs next to the original and is easy to tell apart.
+Apex looks and behaves like stock Nuvio on your TV. It has its own name, icon, logo and package (`com.nuvioapex.tv`), so it installs next to the original and is easy to tell apart.
 
 ## What Apex adds to stock Nuvio
 

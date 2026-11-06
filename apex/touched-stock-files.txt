@@ -73,3 +73,9 @@ app/src/main/res/mipmap-xhdpi/ic_launcher.png
 app/src/main/res/mipmap-xxhdpi/ic_launcher.png
 app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
 README.md
+app/src/main/res/drawable-nodpi/app_logo_wordmark.png
+app/src/main/res/drawable-nodpi/app_logo_wordmark_arctic_blue.png
+app/src/main/res/drawable-nodpi/app_logo_wordmark_gold.png
+app/src/main/res/drawable-nodpi/app_logo_wordmark_graphite.png
+app/src/main/res/drawable-nodpi/app_logo_wordmark_jade.png
+app/src/main/res/drawable-nodpi/app_logo_wordmark_rose_gold.png
