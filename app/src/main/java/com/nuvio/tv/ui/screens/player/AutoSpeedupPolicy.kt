@@ -668,7 +668,7 @@ internal class AutoSpeedupPolicy(
         if (refillCheckAtMs in 0L..s.nowMs) {
             refillCheckAtMs = -1L
             if (boostBase == 0 && !backingOff && s.aheadMs < low && !swapHeld && s.nowMs >= boostBlockedUntilMs) {
-                val most = boostCount(s, goal, sized = false)
+                val most = boostCount(s, goal, sized = false, relaxMemory = true)
                 if (most > downloads) return startBoost(s, "check", most, low, goal)
             }
         }
@@ -677,7 +677,7 @@ internal class AutoSpeedupPolicy(
             return false
         }
         // A falling buffer is not sized from a rate measured earlier: it goes to the most the box and server allow.
-        val most = boostCount(s, goal, sized = why == "seek")
+        val most = boostCount(s, goal, sized = why == "seek", relaxMemory = why != "seek")
         if (most <= downloads) {
             lastBoostNote = boostSkipped(s, why, goal)
             return false
@@ -749,12 +749,13 @@ internal class AutoSpeedupPolicy(
      * piece budget and free memory allow, fewer when the rate one request carries already regains [goalMs] of buffer
      * within [REFILL_WANTED_MS]; never fewer than now.
      */
-    private fun boostCount(s: Sample, goalMs: Long, sized: Boolean = true): Int {
+    private fun boostCount(s: Sample, goalMs: Long, sized: Boolean = true, relaxMemory: Boolean = false): Int {
         var n = minOf(maxDownloads, roomCap, AutoSpeedup.MAX_IN_FLIGHT, probeLimit())
         if (pieceBudgetBytes > 0L && pieceBytes > 0L) {
             while (n > downloads && lentBytes(n, pieceBytes) > pieceBudgetBytes) n--
         }
-        if (!s.userBudget) {
+        // A running-short film's extra downloads take their memory from its own buffer; free memory is not asked for.
+        if (!s.userBudget && !relaxMemory) {
             val idle = s.idleBytes.coerceAtLeast(0L)
             val usable = if (s.roomBytes > Long.MAX_VALUE - idle) Long.MAX_VALUE else s.roomBytes + idle
             while (n > downloads && lentBytes(n, pieceBytes) - lentBytes(downloads, pieceBytes) > usable) n--
