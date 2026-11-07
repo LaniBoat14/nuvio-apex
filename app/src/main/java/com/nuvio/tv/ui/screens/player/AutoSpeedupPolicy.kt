@@ -102,6 +102,13 @@ internal class AutoSpeedupPolicy(
     @Volatile
     var requestLimit: Int = Int.MAX_VALUE
 
+    /** [requestLimit] came from the server's history, not from a refusal in this film: a starving film may probe one above. */
+    @Volatile
+    var limitFromHistory: Boolean = false
+
+    private fun probeLimit(): Int =
+        if (limitFromHistory && requestLimit < Int.MAX_VALUE - HISTORY_PROBE) requestLimit + HISTORY_PROBE else requestLimit
+
     /** No server history: a refill climbs [BOOST_STEP] requests at a time instead of going straight to the most. */
     @Volatile
     var stepBoost: Boolean = false
@@ -117,6 +124,7 @@ internal class AutoSpeedupPolicy(
      */
     fun onRateLimited(limit: Int) {
         val l = limit.coerceAtLeast(1)
+        limitFromHistory = false
         if (l < requestLimit) requestLimit = l
         if (l < refusedLimit) refusedLimit = l
     }
@@ -491,8 +499,9 @@ internal class AutoSpeedupPolicy(
             return downloads
         }
 
-        if (!triedAny && !startJudged && s.fileBitrate > 0L && downloads == 1 && s.nowMs >= blockedUntilMs && !s.swapLow) {
+        if (!triedAny && !startJudged && s.fileBitrate > 0L && downloads == 1 && s.nowMs >= blockedUntilMs) {
             var start = startFor(s.fileBitrate)
+            if (s.swapLow) start = minOf(start, FAST_START_NORMAL)
             while (!s.userBudget && start > 1 && s.roomBytes < lentBytes(start, pieceBytes)) start--
             if (start > 1) {
                 // Fast start: the first seconds fill on several downloads at once instead of measuring one alone first.
@@ -593,10 +602,12 @@ internal class AutoSpeedupPolicy(
         val seeked = newSeek || dropped
         val stalled = previous != null && s.rebuffers > previous.rebuffers
         if (seeked) aboveLow = false
-        val dip = aboveLow && s.playing && s.loading && !s.bufferFull && s.aheadMs < low
+        val falling = fallingNow(s)
+        // A buffer that never reached the low mark but is falling is short too: no need to have been armed first.
+        val dip = (aboveLow || falling) && s.playing && s.loading && !s.bufferFull && s.aheadMs < low
         if (s.aheadMs >= low) aboveLow = true
         // Early warning: not yet under the low mark, but falling fast enough to be empty within EARLY_RUNWAY_MS.
-        val early = !dip && !seeked && aboveLow && s.playing && s.loading && !s.bufferFull &&
+        val early = !dip && !seeked && (aboveLow || falling) && s.playing && s.loading && !s.bufferFull &&
             s.aheadMs < low * EARLY_ZONE_FACTOR && drainRunwayMs(s) in 0L until EARLY_RUNWAY_MS
 
         val why = when {
@@ -626,10 +637,12 @@ internal class AutoSpeedupPolicy(
         }
 
         val backingOff = rateLimited(s.nowMs)
+        // Swap nearly used up holds a healthy film; one that is running short may still add downloads.
+        val swapHeld = s.swapLow && s.aheadMs >= low
         // The back-off holds pieces up: a boost is not judged, nor stepped up, meanwhile.
         if (backingOff && boostAtMs >= 0L) boostAtMs = s.nowMs
         if (!backingOff && boostBase > 0 && downloads < boostTo && s.nowMs - boostStepAtMs >= BOOST_STEP_MS &&
-            s.aheadMs <= boostStepAheadMs && !s.swapLow) {
+            s.aheadMs <= boostStepAheadMs && !swapHeld) {
             val to = minOf(downloads + BOOST_STEP, boostTo)
             boostStepAtMs = s.nowMs
             boostStepAheadMs = s.aheadMs
@@ -654,13 +667,17 @@ internal class AutoSpeedupPolicy(
         // still under the low mark a few seconds into the refill, the boost goes ahead whatever it said.
         if (refillCheckAtMs in 0L..s.nowMs) {
             refillCheckAtMs = -1L
-            if (boostBase == 0 && !backingOff && s.aheadMs < low && !s.swapLow && s.nowMs >= boostBlockedUntilMs) {
+            if (boostBase == 0 && !backingOff && s.aheadMs < low && !swapHeld && s.nowMs >= boostBlockedUntilMs) {
                 val most = boostCount(s, goal, sized = false)
                 if (most > downloads) return startBoost(s, "check", most, low, goal)
             }
         }
-        if (why == null || s.swapLow || s.nowMs < boostBlockedUntilMs) return false
-        val most = boostCount(s, goal)
+        if (why == null || swapHeld || s.nowMs < boostBlockedUntilMs) {
+            if (why != null && swapHeld) lastBoostNote = "boost $why held: swap nearly used up aheadMs=${s.aheadMs}"
+            return false
+        }
+        // A falling buffer is not sized from a rate measured earlier: it goes to the most the box and server allow.
+        val most = boostCount(s, goal, sized = why == "seek")
         if (most <= downloads) {
             lastBoostNote = boostSkipped(s, why, goal)
             return false
@@ -678,6 +695,12 @@ internal class AutoSpeedupPolicy(
         val recent = samples.lastOrNull { it.nowMs <= s.nowMs - EARLY_RECENT_MS } ?: return -1L
         if (recent.aheadMs <= s.aheadMs) return -1L
         return runwayMs(s.aheadMs, old.aheadMs, s.nowMs - old.nowMs)
+    }
+
+    /** The buffer is lower than a few seconds ago. */
+    private fun fallingNow(s: Sample): Boolean {
+        val old = samples.lastOrNull { it.nowMs <= s.nowMs - EARLY_RECENT_MS } ?: return false
+        return s.aheadMs < old.aheadMs
     }
 
     private fun boostSkipped(s: Sample, why: String, goalMs: Long): String {
@@ -727,7 +750,7 @@ internal class AutoSpeedupPolicy(
      * within [REFILL_WANTED_MS]; never fewer than now.
      */
     private fun boostCount(s: Sample, goalMs: Long, sized: Boolean = true): Int {
-        var n = minOf(maxDownloads, roomCap, AutoSpeedup.MAX_IN_FLIGHT, requestLimit)
+        var n = minOf(maxDownloads, roomCap, AutoSpeedup.MAX_IN_FLIGHT, probeLimit())
         if (pieceBudgetBytes > 0L && pieceBytes > 0L) {
             while (n > downloads && lentBytes(n, pieceBytes) > pieceBudgetBytes) n--
         }
@@ -1247,6 +1270,7 @@ internal class AutoSpeedupPolicy(
         const val SMALL_BOX_HEAVY_START = 5
         const val START_TWO_BPS = 40_000_000L
         /** A film opens on this many downloads so its first seconds fill fast; a comfortable buffer hands extras back. */
+        const val HISTORY_PROBE = 1
         const val FAST_START_LIGHT = 2
         const val FAST_START_NORMAL = 3
         /** The most downloads the measured floor holds a film to after the start. */
