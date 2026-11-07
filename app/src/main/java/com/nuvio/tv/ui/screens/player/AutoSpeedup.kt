@@ -438,7 +438,7 @@ internal object AutoSpeedup {
                 Log.i(TAG, "AUTO_SPEEDUP: remembered host=$hostKey perDownloadKbps=${known.perDownloadBps * 8 / 1000} " +
                     "downloads=${known.downloads} firstByteMs=${known.firstByteMs} pieceMb=${known.pieceBytes / MB}")
             }
-            if (guessed >= AutoSpeedupPolicy.START_THREE_BPS && limits.maxDownloads > 1) {
+            if (guessed > 0L && limits.maxDownloads > 1) {
                 if (known == null || known.firstByteMs < 0L) {
                     // No first byte timed yet: the smaller piece, which the slow servers it suits less still carry.
                     pieceBytes = limits.quickHoldBytes

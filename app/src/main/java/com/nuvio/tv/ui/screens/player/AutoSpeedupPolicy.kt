@@ -494,27 +494,12 @@ internal class AutoSpeedupPolicy(
         if (!triedAny && !startJudged && s.fileBitrate > 0L && downloads == 1 && s.nowMs >= blockedUntilMs && !s.swapLow) {
             var start = startFor(s.fileBitrate)
             while (!s.userBudget && start > 1 && s.roomBytes < lentBytes(start, pieceBytes)) start--
-            if (start > 1 && (s.fileBitrate >= START_THREE_BPS || knownPerDownloadBps > 0L)) {
-                // One download cannot carry a remux on a TV box; measuring it first only costs the buffer a stop.
-                startTrial(s, start, TRIAL_MS, "start heavy fileKbps=${s.fileBitrate / 1000}" + budgetTag(s))
+            if (start > 1) {
+                // Fast start: the first seconds fill on several downloads at once instead of measuring one alone first.
+                startTrial(s, start, TRIAL_MS, "start fast fileKbps=${s.fileBitrate / 1000}" + budgetTag(s))
                 trialNeedRate = s.fileBitrate / 8
                 trialHeavy = true
                 return downloads
-            }
-            if (start > 1 && singleMeasured(s)) {
-                val singleBps = rateBps(s.nowMs - START_MEASURE_MS, s.nowMs)
-                val loadingPercent = loadingShare(s.nowMs - START_MEASURE_MS, s.nowMs)
-                val needBps = s.fileBitrate / 8
-                val detail = "fileKbps=${s.fileBitrate / 1000} singleKbps=${singleBps * 8 / 1000}"
-                if (loadingPercent < LOADING_PASS_PERCENT || singleBps * 100 >= needBps * START_SINGLE_ENOUGH_PERCENT) {
-                    startJudged = true
-                    lastChange = "start not needed $detail loading=$loadingPercent%"
-                } else {
-                    singleRateBps = singleBps
-                    startTrial(s, start, TRIAL_MS, "start $detail" + budgetTag(s))
-                    trialNeedRate = needBps
-                    return downloads
-                }
             }
         }
 
@@ -896,8 +881,14 @@ internal class AutoSpeedupPolicy(
         val one = if (singleRateBps > 0L) singleRateBps else if (perDownloadBps > 0L) perDownloadBps else knownPerDownloadBps
         // Nothing measured yet: a remux is assumed too heavy for one download, as its start already assumed.
         if (one <= 0L) return if (s.fileBitrate >= START_THREE_BPS) 2 else 1
-        return if (one * 100 < s.fileBitrate / 8 * START_SINGLE_ENOUGH_PERCENT) 2 else 1
+        return measuredFloor(s.fileBitrate, one)
     }
+
+    /**
+     * The fewest downloads that carry the film with [START_SINGLE_ENOUGH_PERCENT] % of its rate when one carries
+     * [oneBps]: held after the start so a comfortable buffer does not hand back to a count that was too slow.
+     */
+    private fun measuredFloor(fileBitrate: Long, oneBps: Long): Int = floorFor(fileBitrate, oneBps)
 
     /** What the downloads delivered while the player loaded ([bps], bits per second), or that the loader mostly rested. */
     data class Delivered(val bps: Long, val rested: Boolean)
@@ -938,11 +929,6 @@ internal class AutoSpeedupPolicy(
 
     /** When the server last answered "too many requests" to playback, on the samples' clock. */
     val refusedAtMs: Long get() = rateLimitedAtMs
-
-    /** One download has run long enough, after the stream settled, to say what it carries. */
-    private fun singleMeasured(s: Sample): Boolean =
-        s.nowMs - firstSampleMs >= START_SETTLE_MS + START_MEASURE_MS &&
-            samples.first().nowMs <= s.nowMs - START_MEASURE_MS
 
     private fun rateBps(fromMs: Long, toMs: Long): Long {
         val a = samples.lastOrNull { it.nowMs <= fromMs } ?: samples.firstOrNull() ?: return 0L
@@ -1211,7 +1197,7 @@ internal class AutoSpeedupPolicy(
         ): Int {
             val known = perDownloadBps > 0L && fileBitrate > 0L
             if (!known) return guessDownloads(fileBitrate, maxDownloads, pieceBytes, smallBox, 0L)
-            val normal = if (fileBitrate >= START_THREE_BPS) guessDownloads(fileBitrate, maxDownloads, pieceBytes, smallBox, 0L) else 1
+            val normal = guessDownloads(fileBitrate, maxDownloads, pieceBytes, smallBox, 0L)
             return maxOf(normal, guessDownloads(fileBitrate, maxDownloads, pieceBytes, smallBox, perDownloadBps))
         }
 
@@ -1229,7 +1215,8 @@ internal class AutoSpeedupPolicy(
                     ((fileBitrate / 8 * percent / 100 + perDownloadBps - 1) / perDownloadBps).toInt()
                 }
                 fileBitrate >= START_THREE_BPS -> if (smallBox) SMALL_BOX_HEAVY_START else 3
-                fileBitrate >= START_TWO_BPS -> 2
+                fileBitrate >= START_TWO_BPS -> FAST_START_NORMAL
+                fileBitrate > 0L -> FAST_START_LIGHT
                 else -> 1
             }
             val smallMost = when {
@@ -1249,10 +1236,21 @@ internal class AutoSpeedupPolicy(
             return n
         }
 
+        fun floorFor(fileBitrate: Long, oneBps: Long): Int {
+            if (fileBitrate <= 0L || oneBps <= 0L) return 1
+            val need = fileBitrate / 8 * START_SINGLE_ENOUGH_PERCENT / 100
+            return ((need + oneBps - 1) / oneBps).toInt().coerceIn(1, MEASURED_FLOOR_MAX)
+        }
+
         const val SMALL_BOX_START_BYTES = 48L * MB
         /** A remux on a 2 GB box from a server not measured yet: five 8 MB downloads fit [SMALL_BOX_START_BYTES]. */
         const val SMALL_BOX_HEAVY_START = 5
         const val START_TWO_BPS = 40_000_000L
+        /** A film opens on this many downloads so its first seconds fill fast; a comfortable buffer hands extras back. */
+        const val FAST_START_LIGHT = 2
+        const val FAST_START_NORMAL = 3
+        /** The most downloads the measured floor holds a film to after the start. */
+        const val MEASURED_FLOOR_MAX = 4
         const val START_THREE_BPS = 60_000_000L
         const val START_MAX = 3
         /** One download carrying this share of the film's rate is enough; below it the film starts on more. */
