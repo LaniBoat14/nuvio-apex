@@ -102,13 +102,6 @@ internal class AutoSpeedupPolicy(
     @Volatile
     var requestLimit: Int = Int.MAX_VALUE
 
-    /** [requestLimit] came from the server's history, not from a refusal in this film: a starving film may probe one above. */
-    @Volatile
-    var limitFromHistory: Boolean = false
-
-    private fun probeLimit(): Int =
-        if (limitFromHistory && requestLimit < Int.MAX_VALUE - HISTORY_PROBE) requestLimit + HISTORY_PROBE else requestLimit
-
     /** No server history: a refill climbs [BOOST_STEP] requests at a time instead of going straight to the most. */
     @Volatile
     var stepBoost: Boolean = false
@@ -124,7 +117,6 @@ internal class AutoSpeedupPolicy(
      */
     fun onRateLimited(limit: Int) {
         val l = limit.coerceAtLeast(1)
-        limitFromHistory = false
         if (l < requestLimit) requestLimit = l
         if (l < refusedLimit) refusedLimit = l
     }
@@ -179,8 +171,6 @@ internal class AutoSpeedupPolicy(
      * film's recent rate ([FilmRate]); -1 when unknown. [bufferTargetMs] = the seconds of this film the box's buffer may
      * hold (the Max buffer, or less where memory is the limit), 0 when unknown: no refill boost without it.
      * [seekAtMs] = when the user last sought (this clock), 0 for never.
-     * [floorMs] = the user's Minimum buffer while the custom playback buffer is on, 0 otherwise: the low mark follows
-     * it ([lowMarkMs]), so the refill boost starts while there is still film to cover the climb.
      */
     data class Sample(
         val nowMs: Long,
@@ -203,8 +193,7 @@ internal class AutoSpeedupPolicy(
         val playerBytes: Long = -1L,
         val bufferedMs: Long = -1L,
         val bufferTargetMs: Long = 0L,
-        val seekAtMs: Long = 0L,
-        val floorMs: Long = 0L
+        val seekAtMs: Long = 0L
     )
 
     @Volatile
@@ -499,16 +488,30 @@ internal class AutoSpeedupPolicy(
             return downloads
         }
 
-        if (!triedAny && !startJudged && s.fileBitrate > 0L && downloads == 1 && s.nowMs >= blockedUntilMs) {
+        if (!triedAny && !startJudged && s.fileBitrate > 0L && downloads == 1 && s.nowMs >= blockedUntilMs && !s.swapLow) {
             var start = startFor(s.fileBitrate)
-            if (s.swapLow) start = minOf(start, FAST_START_NORMAL)
             while (!s.userBudget && start > 1 && s.roomBytes < lentBytes(start, pieceBytes)) start--
-            if (start > 1) {
-                // Fast start: the first seconds fill on several downloads at once instead of measuring one alone first.
-                startTrial(s, start, TRIAL_MS, "start fast fileKbps=${s.fileBitrate / 1000}" + budgetTag(s))
+            if (start > 1 && (s.fileBitrate >= START_THREE_BPS || knownPerDownloadBps > 0L)) {
+                // One download cannot carry a remux on a TV box; measuring it first only costs the buffer a stop.
+                startTrial(s, start, TRIAL_MS, "start heavy fileKbps=${s.fileBitrate / 1000}" + budgetTag(s))
                 trialNeedRate = s.fileBitrate / 8
                 trialHeavy = true
                 return downloads
+            }
+            if (start > 1 && singleMeasured(s)) {
+                val singleBps = rateBps(s.nowMs - START_MEASURE_MS, s.nowMs)
+                val loadingPercent = loadingShare(s.nowMs - START_MEASURE_MS, s.nowMs)
+                val needBps = s.fileBitrate / 8
+                val detail = "fileKbps=${s.fileBitrate / 1000} singleKbps=${singleBps * 8 / 1000}"
+                if (loadingPercent < LOADING_PASS_PERCENT || singleBps * 100 >= needBps * START_SINGLE_ENOUGH_PERCENT) {
+                    startJudged = true
+                    lastChange = "start not needed $detail loading=$loadingPercent%"
+                } else {
+                    singleRateBps = singleBps
+                    startTrial(s, start, TRIAL_MS, "start $detail" + budgetTag(s))
+                    trialNeedRate = needBps
+                    return downloads
+                }
             }
         }
 
@@ -594,27 +597,21 @@ internal class AutoSpeedupPolicy(
         lastBoostNote = null
         val target = s.bufferTargetMs
         if (target <= 0L) return false
-        val low = lowMarkMs(target, s.floorMs)
-        val goal = refillGoalMs(target, low)
+        val low = lowMarkMs(target)
+        val goal = refillGoalMs(target)
         val firstLook = previous == null && seekSeenMs == 0L
         val newSeek = s.seekAtMs > seekSeenMs && !firstLook
         if (s.seekAtMs > seekSeenMs) seekSeenMs = s.seekAtMs
         val seeked = newSeek || dropped
         val stalled = previous != null && s.rebuffers > previous.rebuffers
         if (seeked) aboveLow = false
-        val falling = fallingNow(s)
-        // A buffer that never reached the low mark but is falling is short too: no need to have been armed first.
-        val dip = (aboveLow || falling) && s.playing && s.loading && !s.bufferFull && s.aheadMs < low
+        val dip = aboveLow && s.playing && s.loading && !s.bufferFull && s.aheadMs < low
         if (s.aheadMs >= low) aboveLow = true
-        // Early warning: not yet under the low mark, but falling fast enough to be empty within EARLY_RUNWAY_MS.
-        val early = !dip && !seeked && (aboveLow || falling) && s.playing && s.loading && !s.bufferFull &&
-            s.aheadMs < low * EARLY_ZONE_FACTOR && drainRunwayMs(s) in 0L until EARLY_RUNWAY_MS
 
         val why = when {
             stalled -> "stall"
             seeked && s.aheadMs < low -> "seek"
             dip -> "dip"
-            early -> "early"
             else -> null
         }
         if (seeked || stalled || (why != null && refillFromMs < 0L)) {
@@ -637,12 +634,10 @@ internal class AutoSpeedupPolicy(
         }
 
         val backingOff = rateLimited(s.nowMs)
-        // Swap nearly used up holds a healthy film; one that is running short may still add downloads.
-        val swapHeld = s.swapLow && s.aheadMs >= low
         // The back-off holds pieces up: a boost is not judged, nor stepped up, meanwhile.
         if (backingOff && boostAtMs >= 0L) boostAtMs = s.nowMs
         if (!backingOff && boostBase > 0 && downloads < boostTo && s.nowMs - boostStepAtMs >= BOOST_STEP_MS &&
-            s.aheadMs <= boostStepAheadMs && !swapHeld) {
+            s.aheadMs <= boostStepAheadMs && !s.swapLow) {
             val to = minOf(downloads + BOOST_STEP, boostTo)
             boostStepAtMs = s.nowMs
             boostStepAheadMs = s.aheadMs
@@ -667,40 +662,18 @@ internal class AutoSpeedupPolicy(
         // still under the low mark a few seconds into the refill, the boost goes ahead whatever it said.
         if (refillCheckAtMs in 0L..s.nowMs) {
             refillCheckAtMs = -1L
-            if (boostBase == 0 && !backingOff && s.aheadMs < low && !swapHeld && s.nowMs >= boostBlockedUntilMs) {
-                val most = boostCount(s, goal, sized = false, relaxMemory = true)
+            if (boostBase == 0 && !backingOff && s.aheadMs < low && !s.swapLow && s.nowMs >= boostBlockedUntilMs) {
+                val most = boostCount(s, goal, sized = false)
                 if (most > downloads) return startBoost(s, "check", most, low, goal)
             }
         }
-        if (why == null || swapHeld || s.nowMs < boostBlockedUntilMs) {
-            if (why != null && swapHeld) lastBoostNote = "boost $why held: swap nearly used up aheadMs=${s.aheadMs}"
-            return false
-        }
-        // A falling buffer is not sized from a rate measured earlier: it goes to the most the box and server allow.
-        val most = boostCount(s, goal, sized = why == "seek", relaxMemory = why != "seek")
+        if (why == null || s.swapLow || s.nowMs < boostBlockedUntilMs) return false
+        val most = boostCount(s, goal)
         if (most <= downloads) {
             lastBoostNote = boostSkipped(s, why, goal)
             return false
         }
         return startBoost(s, why, most, low, goal)
-    }
-
-    /**
-     * Milliseconds until the buffer is empty at the pace of the last [EARLY_WINDOW_MS], [runwayMs]; -1 when that is not
-     * known (under that much history, a seek inside it) or the buffer has stopped falling over the last
-     * [EARLY_RECENT_MS], so a refill that is already working is not mistaken for a fall.
-     */
-    private fun drainRunwayMs(s: Sample): Long {
-        val old = samples.lastOrNull { it.nowMs <= s.nowMs - EARLY_WINDOW_MS } ?: return -1L
-        val recent = samples.lastOrNull { it.nowMs <= s.nowMs - EARLY_RECENT_MS } ?: return -1L
-        if (recent.aheadMs <= s.aheadMs) return -1L
-        return runwayMs(s.aheadMs, old.aheadMs, s.nowMs - old.nowMs)
-    }
-
-    /** The buffer is lower than a few seconds ago. */
-    private fun fallingNow(s: Sample): Boolean {
-        val old = samples.lastOrNull { it.nowMs <= s.nowMs - EARLY_RECENT_MS } ?: return false
-        return s.aheadMs < old.aheadMs
     }
 
     private fun boostSkipped(s: Sample, why: String, goalMs: Long): String {
@@ -749,13 +722,12 @@ internal class AutoSpeedupPolicy(
      * piece budget and free memory allow, fewer when the rate one request carries already regains [goalMs] of buffer
      * within [REFILL_WANTED_MS]; never fewer than now.
      */
-    private fun boostCount(s: Sample, goalMs: Long, sized: Boolean = true, relaxMemory: Boolean = false): Int {
-        var n = minOf(maxDownloads, roomCap, AutoSpeedup.MAX_IN_FLIGHT, probeLimit())
+    private fun boostCount(s: Sample, goalMs: Long, sized: Boolean = true): Int {
+        var n = minOf(maxDownloads, roomCap, AutoSpeedup.MAX_IN_FLIGHT, requestLimit)
         if (pieceBudgetBytes > 0L && pieceBytes > 0L) {
             while (n > downloads && lentBytes(n, pieceBytes) > pieceBudgetBytes) n--
         }
-        // A running-short film's extra downloads take their memory from its own buffer; free memory is not asked for.
-        if (!s.userBudget && !relaxMemory) {
+        if (!s.userBudget) {
             val idle = s.idleBytes.coerceAtLeast(0L)
             val usable = if (s.roomBytes > Long.MAX_VALUE - idle) Long.MAX_VALUE else s.roomBytes + idle
             while (n > downloads && lentBytes(n, pieceBytes) - lentBytes(downloads, pieceBytes) > usable) n--
@@ -878,18 +850,10 @@ internal class AutoSpeedupPolicy(
      * runs short again a download comes back and stays for the film.
      */
     private fun comfortable(s: Sample): Boolean {
-        // A raised low mark (the user's Minimum buffer) moves both lines up: no download is handed back under it.
-        val raised = s.floorMs > 0L && s.bufferTargetMs > 0L
-        val low = if (raised) lowMarkMs(s.bufferTargetMs, s.floorMs) else 0L
-        val comfortableAhead = if (raised) {
-            maxOf(COMFORTABLE_AHEAD_MS, minOf(low + COMFORTABLE_ABOVE_FLOOR_MS, s.bufferTargetMs - FULL_SLACK_MS))
-        } else {
-            COMFORTABLE_AHEAD_MS
-        }
-        if (s.aheadMs >= comfortableAhead) return true
+        if (s.aheadMs >= COMFORTABLE_AHEAD_MS) return true
         val from = s.nowMs - STARVE_WINDOW_MS
         if (loadingShare(from, s.nowMs) >= LOADING_PASS_PERCENT) return false
-        if (s.aheadMs >= maxOf(COMFORTABLE_IDLE_AHEAD_MS, low)) return true
+        if (s.aheadMs >= COMFORTABLE_IDLE_AHEAD_MS) return true
         return samples.any {
             it.nowMs >= from && (it.bufferFull || (it.maxBufferMs > 0L && it.aheadMs >= it.maxBufferMs - FULL_SLACK_MS))
         }
@@ -905,14 +869,8 @@ internal class AutoSpeedupPolicy(
         val one = if (singleRateBps > 0L) singleRateBps else if (perDownloadBps > 0L) perDownloadBps else knownPerDownloadBps
         // Nothing measured yet: a remux is assumed too heavy for one download, as its start already assumed.
         if (one <= 0L) return if (s.fileBitrate >= START_THREE_BPS) 2 else 1
-        return measuredFloor(s.fileBitrate, one)
+        return if (one * 100 < s.fileBitrate / 8 * START_SINGLE_ENOUGH_PERCENT) 2 else 1
     }
-
-    /**
-     * The fewest downloads that carry the film with [START_SINGLE_ENOUGH_PERCENT] % of its rate when one carries
-     * [oneBps]: held after the start so a comfortable buffer does not hand back to a count that was too slow.
-     */
-    private fun measuredFloor(fileBitrate: Long, oneBps: Long): Int = floorFor(fileBitrate, oneBps)
 
     /** What the downloads delivered while the player loaded ([bps], bits per second), or that the loader mostly rested. */
     data class Delivered(val bps: Long, val rested: Boolean)
@@ -953,6 +911,11 @@ internal class AutoSpeedupPolicy(
 
     /** When the server last answered "too many requests" to playback, on the samples' clock. */
     val refusedAtMs: Long get() = rateLimitedAtMs
+
+    /** One download has run long enough, after the stream settled, to say what it carries. */
+    private fun singleMeasured(s: Sample): Boolean =
+        s.nowMs - firstSampleMs >= START_SETTLE_MS + START_MEASURE_MS &&
+            samples.first().nowMs <= s.nowMs - START_MEASURE_MS
 
     private fun rateBps(fromMs: Long, toMs: Long): Long {
         val a = samples.lastOrNull { it.nowMs <= fromMs } ?: samples.firstOrNull() ?: return 0L
@@ -1069,36 +1032,11 @@ internal class AutoSpeedupPolicy(
         /** The film's recent scenes, carried with this margin, when that is more than [TARGET_PERCENT] % of its average. */
         const val RECENT_TARGET_PERCENT = 120
 
-        /**
-         * Under this much buffer a playing film goes straight to more requests: 40 % of what the box holds, 4 to 10 s.
-         * With the user's Minimum buffer ([floorMs], 0 = none) it is that Minimum instead, when that is higher, but
-         * never above [FLOOR_CAP_PERCENT] % of what the box holds: the loader tops the buffer up to within seconds of
-         * its target, so a floor at the target would count as a dip all the time.
-         */
-        fun lowMarkMs(bufferTargetMs: Long, floorMs: Long = 0L): Long {
-            val auto = (bufferTargetMs * 40 / 100).coerceIn(LOW_MARK_MIN_MS, LOW_MARK_MAX_MS)
-            if (floorMs <= 0L || bufferTargetMs <= 0L) return auto
-            return maxOf(auto, minOf(floorMs, bufferTargetMs * FLOOR_CAP_PERCENT / 100))
-        }
+        /** Under this much buffer a playing film goes straight to more requests: 40 % of what the box holds, 4 to 10 s. */
+        fun lowMarkMs(bufferTargetMs: Long): Long = (bufferTargetMs * 40 / 100).coerceIn(LOW_MARK_MIN_MS, LOW_MARK_MAX_MS)
 
-        /**
-         * A refill is done at this much buffer: nine tenths of what the box holds, at most [REFILL_GOAL_MAX_MS], or
-         * [FLOOR_GOAL_HEADROOM_MS] above a raised low mark ([lowMs]) so that a refill ends above the line it started under.
-         */
-        fun refillGoalMs(bufferTargetMs: Long, lowMs: Long = lowMarkMs(bufferTargetMs)): Long =
-            minOf(bufferTargetMs * 90 / 100, maxOf(REFILL_GOAL_MAX_MS, lowMs + FLOOR_GOAL_HEADROOM_MS))
-
-        /**
-         * Milliseconds until the buffer is empty at the pace it fell over the last [spanMs] ([aheadThenMs] to
-         * [aheadNowMs]); -1 when it fell by less than [EARLY_MIN_DRAIN_PERCENT] % of the time that passed, that is,
-         * the downloads are covering most of the film's pace.
-         */
-        fun runwayMs(aheadNowMs: Long, aheadThenMs: Long, spanMs: Long): Long {
-            if (spanMs <= 0L) return -1L
-            val fell = aheadThenMs - aheadNowMs
-            if (fell * 100L < spanMs * EARLY_MIN_DRAIN_PERCENT) return -1L
-            return aheadNowMs * spanMs / fell
-        }
+        /** A refill is done at this much buffer: nine tenths of what the box holds, at most [REFILL_GOAL_MAX_MS]. */
+        fun refillGoalMs(bufferTargetMs: Long): Long = minOf(bufferTargetMs * 90 / 100, REFILL_GOAL_MAX_MS)
 
         /** Bytes per second that regain [goalMs] of buffer from [aheadMs] within [REFILL_WANTED_MS] at [filmBps]. */
         fun refillRate(filmBps: Long, aheadMs: Long, goalMs: Long): Long =
@@ -1106,22 +1044,6 @@ internal class AutoSpeedupPolicy(
 
         const val LOW_MARK_MIN_MS = 4_000L
         const val LOW_MARK_MAX_MS = 10_000L
-        /** The Minimum buffer counts as the low mark up to this share of what the box holds. */
-        const val FLOOR_CAP_PERCENT = 75L
-        /** A refill for a raised low mark ends this far above it. */
-        const val FLOOR_GOAL_HEADROOM_MS = 10_000L
-        /** A raised low mark is comfortable only this far above it, so a download is not handed back under the floor. */
-        const val COMFORTABLE_ABOVE_FLOOR_MS = 5_000L
-        /**
-         * Early warning: a buffer under [EARLY_ZONE_FACTOR] times the low mark that fell over [EARLY_WINDOW_MS], and is
-         * still falling, boosts when it would be empty within [EARLY_RUNWAY_MS] at that pace, before the low mark.
-         * Falling by less than [EARLY_MIN_DRAIN_PERCENT] % of the time that passed is the downloads keeping up.
-         */
-        const val EARLY_WINDOW_MS = 8_000L
-        const val EARLY_RECENT_MS = 3_000L
-        const val EARLY_ZONE_FACTOR = 2L
-        const val EARLY_RUNWAY_MS = 20_000L
-        const val EARLY_MIN_DRAIN_PERCENT = 15L
         const val REFILL_GOAL_MAX_MS = 30_000L
         const val REFILL_WANTED_MS = 10_000L
         const val REFILL_GIVE_UP_MS = 60_000L
@@ -1221,7 +1143,7 @@ internal class AutoSpeedupPolicy(
         ): Int {
             val known = perDownloadBps > 0L && fileBitrate > 0L
             if (!known) return guessDownloads(fileBitrate, maxDownloads, pieceBytes, smallBox, 0L)
-            val normal = guessDownloads(fileBitrate, maxDownloads, pieceBytes, smallBox, 0L)
+            val normal = if (fileBitrate >= START_THREE_BPS) guessDownloads(fileBitrate, maxDownloads, pieceBytes, smallBox, 0L) else 1
             return maxOf(normal, guessDownloads(fileBitrate, maxDownloads, pieceBytes, smallBox, perDownloadBps))
         }
 
@@ -1239,8 +1161,7 @@ internal class AutoSpeedupPolicy(
                     ((fileBitrate / 8 * percent / 100 + perDownloadBps - 1) / perDownloadBps).toInt()
                 }
                 fileBitrate >= START_THREE_BPS -> if (smallBox) SMALL_BOX_HEAVY_START else 3
-                fileBitrate >= START_TWO_BPS -> FAST_START_NORMAL
-                fileBitrate > 0L -> FAST_START_LIGHT
+                fileBitrate >= START_TWO_BPS -> 2
                 else -> 1
             }
             val smallMost = when {
@@ -1260,22 +1181,10 @@ internal class AutoSpeedupPolicy(
             return n
         }
 
-        fun floorFor(fileBitrate: Long, oneBps: Long): Int {
-            if (fileBitrate <= 0L || oneBps <= 0L) return 1
-            val need = fileBitrate / 8 * START_SINGLE_ENOUGH_PERCENT / 100
-            return ((need + oneBps - 1) / oneBps).toInt().coerceIn(1, MEASURED_FLOOR_MAX)
-        }
-
         const val SMALL_BOX_START_BYTES = 48L * MB
         /** A remux on a 2 GB box from a server not measured yet: five 8 MB downloads fit [SMALL_BOX_START_BYTES]. */
         const val SMALL_BOX_HEAVY_START = 5
         const val START_TWO_BPS = 40_000_000L
-        /** A film opens on this many downloads so its first seconds fill fast; a comfortable buffer hands extras back. */
-        const val HISTORY_PROBE = 1
-        const val FAST_START_LIGHT = 2
-        const val FAST_START_NORMAL = 3
-        /** The most downloads the measured floor holds a film to after the start. */
-        const val MEASURED_FLOOR_MAX = 4
         const val START_THREE_BPS = 60_000_000L
         const val START_MAX = 3
         /** One download carrying this share of the film's rate is enough; below it the film starts on more. */

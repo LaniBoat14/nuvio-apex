@@ -525,12 +525,6 @@ class PlayerRuntimeController(
     /** Custom LoadControl for this playback (null when using stock); used to resolve the back buffer at first frame. */
     internal var currentBitrateAwareLoadControl: BitrateAwareLoadControl? = null
     /** Parallel chunk buffer overhead (MB) currently deducted from the target buffer size. */
-    /**
-     * The user's Minimum buffer in milliseconds while the custom playback buffer is on, 0 otherwise. The Automatic
-     * speed-up takes it as the buffer floor: under it the refill boost starts, see [AutoSpeedupPolicy.lowMarkMs].
-     */
-    @Volatile
-    internal var userBufferFloorMs: Long = 0L
     internal var currentParallelChunkOverheadMb: Int = 0
     /** Managed custom-buffer budget (MB) sized at build, before the chunk overhead comes off. */
     internal var currentManagedBudgetMb: Int = com.nuvio.tv.ui.screens.settings.ArcMemoryBudget.autoBudgetMb

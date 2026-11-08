@@ -359,7 +359,7 @@ internal object AutoSpeedup {
         if (key == hostKey) return
         val p = policy ?: return
         val limit = HostSpeeds.limitOf(key)
-        if (limit != null) { p.onRateLimited(limit); p.limitFromHistory = true }
+        if (limit != null) p.onRateLimited(limit)
         if (limit != null) HostSpeeds.heldBlock(key)?.let { logBlockHeld(key, limit, it) }
         val known = HostSpeeds.get(key)
         p.stepBoost = known == null && limit == null && LedgerKey.knownTotal(LedgerKey.of(resolvedUrl)) == null
@@ -414,7 +414,7 @@ internal object AutoSpeedup {
             p.pieceBudgetBytes = limits.pieceBudgetBytes
             p.readAheadMaxBytes = limits.readAheadMaxBytes
             val limit = hostKey?.let { HostSpeeds.limitOf(it) }
-            if (limit != null) { p.requestLimit = limit; p.limitFromHistory = true }
+            if (limit != null) p.requestLimit = limit
             if (limit != null) hostKey?.let(HostSpeeds::heldBlock)?.let { logBlockHeld(hostKey, limit, it) }
             p.stepBoost = remembered == null && limit == null && LedgerKey.knownTotal(LedgerKey.of(streamUrl)) == null
             policy = p
@@ -438,7 +438,7 @@ internal object AutoSpeedup {
                 Log.i(TAG, "AUTO_SPEEDUP: remembered host=$hostKey perDownloadKbps=${known.perDownloadBps * 8 / 1000} " +
                     "downloads=${known.downloads} firstByteMs=${known.firstByteMs} pieceMb=${known.pieceBytes / MB}")
             }
-            if (guessed > 0L && limits.maxDownloads > 1) {
+            if (guessed >= AutoSpeedupPolicy.START_THREE_BPS && limits.maxDownloads > 1) {
                 if (known == null || known.firstByteMs < 0L) {
                     // No first byte timed yet: the smaller piece, which the slow servers it suits less still carry.
                     pieceBytes = limits.quickHoldBytes

@@ -2338,8 +2338,7 @@ private fun PlayerRuntimeController.sampleAutoSpeedup(player: Player, positionMs
             playerBytes = PlaybackByteCounter.snapshot().readBytes,
             bufferedMs = player.bufferedPosition,
             bufferTargetMs = bufferTargetMs,
-            seekAtMs = lastSeekWallMs,
-            floorMs = userBufferFloorMs
+            seekAtMs = lastSeekWallMs
         )
     )
     AutoSpeedup.logMemoryPlan(nowMs, control?.bufferAllocator?.totalBytesAllocated?.toLong() ?: 0L, targetBytes,
