@@ -135,8 +135,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1075004
-        versionName = "0.5.0"
+        versionCode = 1076001
+        versionName = "0.6.0"
 
         buildConfigField("String", "PARENTAL_GUIDE_API_URL", "\"${localProperties.getProperty("PARENTAL_GUIDE_API_URL", "")}\"")
         buildConfigField("String", "INTRODB_API_URL", "\"${localProperties.getProperty("INTRODB_API_URL", "")}\"")
@@ -180,7 +180,7 @@ android {
         buildConfigField("String", "GITHUB_OWNER", "\"LaniBoat14\"")
         buildConfigField("String", "GITHUB_REPO", "\"nuvio-apex\"")
         // The Nuvio release this build is rebased on; shown in About. Change when rebasing onto a new Nuvio beta.
-        buildConfigField("String", "NUVIO_BASE", "\"1.1.0-beta.12\"")
+        buildConfigField("String", "NUVIO_BASE", "\"1.1.0-beta.13\"")
     }
 
     flavorDimensions += "distribution"
