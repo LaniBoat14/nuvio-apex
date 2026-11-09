@@ -1,6 +1,8 @@
 name: Apex E build
 on:
   workflow_dispatch:
+  push:
+    branches: [apex-e1-flow-base]
 permissions:
   contents: write
 concurrency:
