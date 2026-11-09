@@ -1,0 +1,44 @@
+# Local configuration and credentials
+local.properties
+local.*.properties
+.env
+.env.*
+!.env.example
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.pem
+*.key
+key.properties
+keystore.properties
+credentials.json
+google-services.json
+# Machine state and generated outputs
+.gradle/
+.kotlin/
+.cxx/
+.externalNativeBuild/
+.idea/
+.DS_Store
+# Only generated module outputs; core/build is Kotlin source.
+/build/
+/*/build/
+*.log
+*.hprof
+*.apk
+*.aab
+*.apks
+*.zip
+flow-startup-backup-*/
+flow-device-backup-*/
+flow-analytics-backup-*/
+*.before-*
+
+# Required PUBLIC CA certificates (not private signing material)
+!app/src/main/res/raw/isrgrootx1.pem
+!app/src/main/res/raw/isrg_root_x2.pem
+
+# Python automation test bytecode
+__pycache__/
+*.pyc
