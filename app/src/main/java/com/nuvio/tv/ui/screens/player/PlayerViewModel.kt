@@ -677,6 +677,9 @@ class PlayerViewModel @Inject constructor(
         PlaybackLanes.requestsText(hud.lanes?.takeIf { it.auto }?.let { AutoSpeedup.hud() })?.let {
             rows += StatsRow("Requests", it, StatsDot.NONE, marquee = true)
         }
+        PlaybackLanes.autoText(hud.lanes?.takeIf { it.auto }?.let { AutoSpeedup.hud() })?.let {
+            rows += StatsRow("Auto", it, StatsDot.NONE, marquee = true)
+        }
         lastPingMs?.takeIf { it.matches(hud.transfer) }?.let { ping ->
             rows += StatsRow("Server latency", "${ping.elapsedMs} ms", StatsDot.NONE)
         }

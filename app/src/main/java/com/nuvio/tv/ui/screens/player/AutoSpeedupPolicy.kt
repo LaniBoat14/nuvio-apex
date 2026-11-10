@@ -33,6 +33,15 @@ internal class AutoSpeedupPolicy(
     @Volatile
     var knownStartPieceBytes: Long = 0L
 
+    /** The piece this server's films run on at least, where it fits [pieceBudgetBytes]: fewer requests for the same film. */
+    var preferredPieceBytes: Long = 0L
+
+    private fun atLeastPreferred(downloads: Int, piece: Long): Long {
+        val prefer = preferredPieceBytes
+        if (prefer <= piece || pieceBudgetBytes <= 0L) return piece
+        return maxOf(piece, fittingPiece(downloads, prefer, pieceBudgetBytes))
+    }
+
     /** The wait for the first byte on the start's single request (an add-on's redirect included), -1 while unknown. */
     @Volatile
     var firstByteMs: Long = -1L
@@ -332,8 +341,8 @@ internal class AutoSpeedupPolicy(
         val usual = startDownloads(fileBitrate, maxDownloads, plan.pieceBytes, smallBox, knownPerDownloadBps)
         val n = maxOf(usual, plan.downloads)
         val raw = rawRateNow()
-        pieceBytes = if (n == plan.downloads || raw == null) plan.pieceBytes
-            else pieceForDownloads(n, waitMs(), raw, targetNow(fileBitrate), pieceBudgetBytes) ?: plan.pieceBytes
+        pieceBytes = atLeastPreferred(n, if (n == plan.downloads || raw == null) plan.pieceBytes
+            else pieceForDownloads(n, waitMs(), raw, targetNow(fileBitrate), pieceBudgetBytes) ?: plan.pieceBytes)
         return n
     }
 
@@ -344,8 +353,8 @@ internal class AutoSpeedupPolicy(
     fun rememberedStartPiece(downloads: Int): Long {
         val known = knownStartPieceBytes
         val piece = pieceBytes
-        if (pieceBudgetBytes <= 0L || known !in PIECE_STEPS || known <= piece) return piece
-        return maxOf(piece, fittingPiece(downloads, known, pieceBudgetBytes))
+        if (pieceBudgetBytes <= 0L || known !in PIECE_STEPS || known <= piece) return atLeastPreferred(downloads, piece)
+        return atLeastPreferred(downloads, maxOf(piece, fittingPiece(downloads, known, pieceBudgetBytes)))
     }
 
     /**
@@ -391,7 +400,7 @@ internal class AutoSpeedupPolicy(
             if (s.userBudget) Long.MAX_VALUE else s.roomBytes, readAheadMaxBytes) ?: return
         lastPieceChange = if (step.held) "piece held ${piece / MB}->${step.to / MB}MB ${step.why}"
             else "piece ${piece / MB}->${step.to / MB}MB ${step.why}"
-        if (!step.held) pieceBytes = step.to
+        if (!step.held) pieceBytes = atLeastPreferred(downloads, step.to)
     }
 
     /** What the downloads carry now while the loader never rests: the network is the limit then. */
@@ -561,9 +570,11 @@ internal class AutoSpeedupPolicy(
                 if (comfortableSinceMs < 0L) comfortableSinceMs = s.nowMs
                 if (s.nowMs - comfortableSinceMs >= COMFORTABLE_MS) {
                     comfortableSinceMs = s.nowMs
-                    val to = boostBase
-                    endBoost(s.nowMs)
-                    change(to, s.nowMs, "comfortable after the refill")
+                    // One back at a time: comfortable again at the lower count before the next goes.
+                    val last = downloads - 1 <= boostBase
+                    val to = if (last) boostBase else downloads - 1
+                    if (last) endBoost(s.nowMs) else boostTo = to
+                    change(to, s.nowMs, "comfortable after the refill" + if (last) "" else ", one back")
                 }
             } else {
                 comfortableSinceMs = -1L
@@ -582,6 +593,37 @@ internal class AutoSpeedupPolicy(
             comfortableSinceMs = -1L
         }
         return downloads
+    }
+
+    /**
+     * Seconds of buffer left at the pace it is falling now, in ms: the buffer fell at least [RUNWAY_MIN_FALL_PERCENT] %
+     * of real time over the last [RUNWAY_WINDOW_MS] while the loader ran, so the requests in flight do not carry the
+     * film. Null while it holds or grows, the loader rests, or there is too little history (after a seek).
+     */
+    private fun runwayMs(s: Sample): Long? {
+        if (!s.playing || !s.loading || s.bufferFull) return null
+        val first = samples.firstOrNull { it.nowMs >= s.nowMs - RUNWAY_WINDOW_MS } ?: return null
+        val span = s.nowMs - first.nowMs
+        if (span < RUNWAY_MIN_SPAN_MS) return null
+        if (loadingShare(first.nowMs, s.nowMs) < LOADING_PASS_PERCENT) return null
+        val fell = first.aheadMs - s.aheadMs
+        if (fell <= 0L || fell * 100L < span * RUNWAY_MIN_FALL_PERCENT) return null
+        return s.aheadMs * span / fell
+    }
+
+    /** The runway at the last sample in ms, -1 while the buffer is not falling; for the Auto row. */
+    @Volatile
+    var runwayNowMs: Long = -1L
+        private set
+
+    /** What the policy is doing now, in a few words, for the Auto row. */
+    fun stateTag(nowMs: Long): String = when {
+        rateLimited(nowMs) -> "paused, server asked to slow down"
+        boostBase > 0 -> "boost to ${maxOf(boostTo, downloads)}, back to $boostBase when comfortable"
+        trialStartMs >= 0L -> "trying $downloads (was $trialBackTo)"
+        heldForSwap -> "held, swap low"
+        nowMs < blockedUntilMs -> "held, blocked ${(blockedUntilMs - nowMs) / 1000}s"
+        else -> "steady"
     }
 
     /**
@@ -607,11 +649,17 @@ internal class AutoSpeedupPolicy(
         if (seeked) aboveLow = false
         val dip = aboveLow && s.playing && s.loading && !s.bufferFull && s.aheadMs < low
         if (s.aheadMs >= low) aboveLow = true
+        val runway = runwayMs(s)
+        runwayNowMs = runway ?: -1L
+        // Falling toward empty while still above the low mark: act now, not at the low mark.
+        val fall = runway != null && aboveLow && !seeked && boostBase == 0 && s.aheadMs < goal &&
+            runway < RUNWAY_ACT_MS && s.nowMs - boostEndedAtMs >= RUNWAY_COOLDOWN_MS
 
         val why = when {
             stalled -> "stall"
             seeked && s.aheadMs < low -> "seek"
             dip -> "dip"
+            fall -> "runway"
             else -> null
         }
         if (seeked || stalled || (why != null && refillFromMs < 0L)) {
@@ -691,7 +739,7 @@ internal class AutoSpeedupPolicy(
         boostStepAheadMs = s.aheadMs
         val to = if (stepBoost) minOf(downloads + BOOST_STEP, most) else most
         var base = if (boostBase > 0) boostBase else downloads
-        if (why == "dip" && boostBase == 0 && s.nowMs - boostEndedAtMs < KEEP_AFTER_DROP_MS) {
+        if ((why == "dip" || why == "runway") && boostBase == 0 && s.nowMs - boostEndedAtMs < KEEP_AFTER_DROP_MS) {
             base = maxOf(base, minOf(boostEndedBase + 1, to))
         }
         trialStartMs = -1L
@@ -1052,6 +1100,12 @@ internal class AutoSpeedupPolicy(
         const val REFILL_CHECK_MS = 5_000L
         /** A refill on a server with no history climbs this many requests every [BOOST_STEP_MS] while the buffer falls. */
         const val BOOST_STEP = 2
+        /** A buffer that would run out within this at the pace it is falling is refilled now (see [runwayMs]). */
+        const val RUNWAY_ACT_MS = 40_000L
+        const val RUNWAY_WINDOW_MS = 6_000L
+        const val RUNWAY_MIN_SPAN_MS = 4_000L
+        const val RUNWAY_MIN_FALL_PERCENT = 10L
+        const val RUNWAY_COOLDOWN_MS = 20_000L
         const val BOOST_STEP_MS = 2_000L
         /** After "too many requests", the buffer's fall is the server's back-off, not a slow line, for this long. */
         const val RATE_LIMIT_QUIET_MS = 15_000L
