@@ -246,7 +246,7 @@ fun PlayerScreen(
     val postPlayRecommendationFocusRequester = remember { FocusRequester() }
     val postPlayRecommendationPlayerWindowFocusRequester = remember { FocusRequester() }
     var skipButtonActuallyVisible by remember { mutableStateOf(false) }
-    var showPlaybackStats by remember { mutableStateOf(false) }
+    var showFlowAnalytics by remember { mutableStateOf(false) }
     var restoreStreamInfoFocus by remember { mutableStateOf(false) }
     var focusPlayAfterMoreBack by remember { mutableStateOf(false) }
     var hideControlsAfterStreamInfo by remember { mutableStateOf(false) }
@@ -364,8 +364,8 @@ fun PlayerScreen(
             returnToDetailsFromEndPrompt()
         } else if (uiState.error != null) {
             exitPlayerFromError()
-        } else if (showPlaybackStats) {
-            showPlaybackStats = false
+        } else if (showFlowAnalytics) {
+            showFlowAnalytics = false
         } else if (uiState.showAudioOverlay || uiState.showSubtitleOverlay) {
             viewModel.onEvent(PlayerEvent.OnDismissTransientOverlay)
         } else if (uiState.showStreamInfoOverlay) {
@@ -1144,11 +1144,11 @@ fun PlayerScreen(
                 val subtitleMeasurePaint = remember { android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG) }
                 LaunchedEffect(subtitleWidthKey, prescannedSubtitleTexts) {
                     val metrics = subtitleTextMetrics ?: return@LaunchedEffect
-                    if (prescannedSubtitleTexts.isEmpty()) return@LaunchedEffect
+                    val texts = prescannedSubtitleTexts
                     val widest = withContext(Dispatchers.Default) {
                         val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
-                        prescannedSubtitleTexts.maxOf { measureSubtitleBlockPx(paint, it, metrics) }
-                    }
+                        texts.maxOfOrNull { measureSubtitleBlockPx(paint, it, metrics) }
+                    } ?: return@LaunchedEffect
                     widestSubtitleBlockPx = maxOf(widestSubtitleBlockPx ?: 0f, widest)
                 }
                 LaunchedEffect(subtitleWidthKey, subtitleCueState) {
@@ -1400,26 +1400,26 @@ fun PlayerScreen(
             )
         }
 
-        var playbackStatsSample by remember { mutableStateOf<PlaybackStatsSample?>(null) }
-        val statsHostView = androidx.compose.ui.platform.LocalView.current
-        LaunchedEffect(showPlaybackStats) {
-            if (!showPlaybackStats) {
-                playbackStatsSample = null
+        var arcPlaybackStats by remember { mutableStateOf<PlaybackStatsSample?>(null) }
+        val arcStatsHostView = androidx.compose.ui.platform.LocalView.current
+        LaunchedEffect(showFlowAnalytics) {
+            if (!showFlowAnalytics) {
+                arcPlaybackStats = null
                 return@LaunchedEffect
             }
             pollPlaybackStats(probe = { viewModel.samplePing() }, sample = { ping ->
-                val display = statsHostView.display
+                val display = arcStatsHostView.display
                 val mode = display?.mode
                 val options = display?.supportedModes?.count {
                     it.physicalWidth == mode?.physicalWidth && it.physicalHeight == mode?.physicalHeight
                 }
-                playbackStatsSample = viewModel.samplePlaybackStats(mode?.refreshRate, options,
+                arcPlaybackStats = viewModel.samplePlaybackStats(mode?.refreshRate, options,
                     mode?.physicalWidth, mode?.physicalHeight, ping)
             })
         }
         PlaybackStatsOverlay(
-            visible = showPlaybackStats && uiState.error == null,
-            sample = playbackStatsSample,
+            visible = showFlowAnalytics && uiState.error == null,
+            sample = arcPlaybackStats,
             compact = false,
             modifier = Modifier.align(Alignment.TopEnd)
                 .padding(top = NuvioTheme.spacing.sm, end = NuvioTheme.spacing.lg).zIndex(2.9f)
@@ -1692,7 +1692,7 @@ fun PlayerScreen(
                         }
                     }
                 }.takeUnless { uiState.isServerStream },
-                onShowPlaybackStats = { showPlaybackStats = !showPlaybackStats },
+                onShowFlowAnalytics = { showFlowAnalytics = !showFlowAnalytics },
                 onShowStreamInfo = {
                     restoreStreamInfoFocus = true
                     viewModel.onEvent(PlayerEvent.OnShowStreamInfo)
@@ -2810,7 +2810,7 @@ private fun PlayerControlsOverlay(
     onReportPlaybackIssue: () -> Unit,
     onToggleMoreActions: () -> Unit,
     onOpenInExternalPlayer: (() -> Unit)?,
-    onShowPlaybackStats: () -> Unit,
+    onShowFlowAnalytics: () -> Unit,
     onShowStreamInfo: () -> Unit,
     onResetHideTimer: () -> Unit,
     onHideControls: () -> Unit,
@@ -3197,7 +3197,7 @@ private fun PlayerControlsOverlay(
                     ControlButton(
                         icon = Icons.Default.BarChart,
                         contentDescription = "Playback analytics",
-                        onClick = { onShowPlaybackStats(); onResetHideTimer() },
+                        onClick = { onShowFlowAnalytics(); onResetHideTimer() },
                         upFocusRequester = progressUpTarget,
                         onDownKey = onHideControls,
                         onFocused = onResetHideTimer

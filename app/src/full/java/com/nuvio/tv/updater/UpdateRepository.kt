@@ -18,6 +18,13 @@ class UpdateRepository @Inject constructor(
         return runCatching {
             val owner = BuildConfig.GITHUB_OWNER
             val repo = BuildConfig.GITHUB_REPO
+            require(owner.isNotBlank() && repo.isNotBlank()) {
+                "Flow update hosting is not configured. This build cannot install official Nuvio releases."
+            }
+            require(!(owner.equals("NuvioMedia", true) && repo.equals("NuvioTV", true))) {
+                "Flow requires its own signed release feed."
+            }
+
 
             val releases = when (channel) {
                 UpdateChannel.STABLE -> {

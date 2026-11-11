@@ -132,20 +132,22 @@ fun AboutSettingsContent(
                             )
 
                             Text(
-                                text = stringResource(R.string.about_version, BuildConfig.VERSION_NAME),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = NuvioTheme.colors.TextSecondary,
-                                textAlign = TextAlign.Center
-                            )
-
-                            Text(
-                                text = "Nuvio Apex · based on Nuvio ${BuildConfig.NUVIO_BASE}",
+                                text = "Nuvio Apex · " + BuildConfig.VERSION_NAME + "\nBased on Nuvio " + BuildConfig.NUVIO_BASE,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = NuvioTheme.colors.TextSecondary,
                                 textAlign = TextAlign.Center
                             )
 
                             Spacer(modifier = Modifier.height(NuvioTheme.spacing.xxs))
+
+                            Text(
+                                text = if (BuildConfig.GITHUB_OWNER.isBlank() || BuildConfig.GITHUB_REPO.isBlank())
+                                    "Apex update hosting not configured"
+                                else "Apex updates: ${BuildConfig.GITHUB_OWNER}/${BuildConfig.GITHUB_REPO}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = NuvioTheme.colors.TextSecondary,
+                                textAlign = TextAlign.Center
+                            )
 
                             if (AppFeaturePolicy.inAppUpdatesEnabled) {
                                 UpdateChannelSettings(initialFocusRequester, modifier = firstRowModifier)

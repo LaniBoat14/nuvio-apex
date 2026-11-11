@@ -429,6 +429,24 @@ internal fun AudioSettingsDialogs(
 }
 
 @Composable
+private fun AudioOutputChannelsDialog(
+    selectedChannels: AudioOutputChannels,
+    onChannelsSelected: (AudioOutputChannels) -> Unit,
+    onDismiss: () -> Unit
+) {
+    SettingsSingleChoiceDialog(
+        title = stringResource(R.string.audio_number_of_channels),
+        subtitle = stringResource(R.string.audio_number_of_channels_desc),
+        options = AudioOutputChannels.entries.map { SettingsPickerOption(it, it.displayLabel) },
+        selectedValue = selectedChannels,
+        onOptionSelected = onChannelsSelected,
+        onDismiss = onDismiss,
+        width = 420.dp,
+        maxHeight = 420.dp
+    )
+}
+
+@Composable
 private fun NightModeDialog(
     selectedMode: NightMode,
     onModeSelected: (NightMode) -> Unit,
@@ -462,24 +480,6 @@ private fun NightModeDialog(
         onDismiss = onDismiss,
         width = 420.dp,
         maxHeight = 320.dp
-    )
-}
-
-@Composable
-private fun AudioOutputChannelsDialog(
-    selectedChannels: AudioOutputChannels,
-    onChannelsSelected: (AudioOutputChannels) -> Unit,
-    onDismiss: () -> Unit
-) {
-    SettingsSingleChoiceDialog(
-        title = stringResource(R.string.audio_number_of_channels),
-        subtitle = stringResource(R.string.audio_number_of_channels_desc),
-        options = AudioOutputChannels.entries.map { SettingsPickerOption(it, it.displayLabel) },
-        selectedValue = selectedChannels,
-        onOptionSelected = onChannelsSelected,
-        onDismiss = onDismiss,
-        width = 420.dp,
-        maxHeight = 420.dp
     )
 }
 

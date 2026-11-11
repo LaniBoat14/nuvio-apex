@@ -50,11 +50,8 @@ internal object ThumbRateLimit {
 /**
  * How many fetches one session runs at once: a few to start, one more after every [SUCCESSES_PER_STEP] fetches that
  * got through, and one at a time for the rest of the session once the server rate limits. The phase ceiling
- * (the fetch-lane ceiling) always applies on top.
+ * ([ThumbFetchLanes.limit]) always applies on top.
  */
-/** Most fetch lanes the ramp ever opens (Arc: ThumbFetchLanes.MAX; Apex has no thumbnail fetcher). */
-private const val MAX_FETCH_LANES = 8
-
 internal class FetchRamp(limitedFromStart: Boolean = false) {
     companion object {
         const val START_LANES = 3
@@ -77,7 +74,7 @@ internal class FetchRamp(limitedFromStart: Boolean = false) {
     fun succeeded(startedAtMs: Long) {
         if (startedAtMs <= lastHitAtMs) return
         hitsInRow = 0
-        if (limited || lanes >= MAX_FETCH_LANES) return
+        if (limited || lanes >= 8 /* Arc thumbnail lane ceiling; no thumbnail worker is installed. */) return
         if (++okSinceStep >= SUCCESSES_PER_STEP) {
             lanes++
             okSinceStep = 0

@@ -71,8 +71,8 @@ internal object BufferSettingsNumbers {
     fun stutterLimitMb(nativeMemory: Boolean, ramKnown: Boolean, autoSizeMb: Int, safeMaxMb: Int): Int = when {
         !ramKnown -> safeMaxMb
         nativeMemory -> autoSizeMb
-        else -> (autoSizeMb / ArcMemoryBudget.BUFFER_STEP_MB * ArcMemoryBudget.BUFFER_STEP_MB)
-            .coerceAtLeast(ArcMemoryBudget.MIN_BUFFER_MB)
+        else -> (autoSizeMb / MemoryBudget.BUFFER_STEP_MB * MemoryBudget.BUFFER_STEP_MB)
+            .coerceAtLeast(MemoryBudget.MIN_BUFFER_MB)
     }
 
     /** The buffer's own colour: a size the user set above the stutter or danger line. An automatic size fits itself. */

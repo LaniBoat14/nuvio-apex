@@ -16,7 +16,7 @@
   <string name="playback_buffer_allow_large_desc">Lets the Target buffer size go up to 2 GB. Only for boxes with 4 GB of memory or more; on smaller boxes big sizes stutter or crash.</string>
   <string name="playback_net_auto_speedup">Automatic speed-up</string>
   <string name="playback_net_auto_speedup_sub">Helps films that keep buffering from far-away servers. The app asks the box for a bigger download window and, on boxes with enough memory, adds extra downloads if a film still runs short. Off: one standard download.</string>
-  <string name="playback_net_auto_speedup_custom_note">With Custom network on, your own connection settings are used. Only the bigger download window still applies.</string>
+  <string name="playback_net_auto_speedup_custom_note">When Connections is set to a number, your own connection settings are used. Only the bigger download window still applies.</string>
   <string name="playback_net_connections">Connections</string>
   <string name="playback_net_connections_sub">How many connections fetch a stream at once. Automatic uses one and, on boxes with enough memory, Automatic speed-up adds more when a film needs them.</string>
   <string name="playback_net_connections_auto">Automatic</string>

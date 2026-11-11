@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Nuvio</string>
+    <string name="app_name">Nuvio Apex</string>
     <string name="tv_channel_continue_watching">Tiếp tục xem</string>
     <string name="type_movie">Phim</string>
     <string name="type_movies">Phim</string>
@@ -1211,6 +1211,8 @@
     <!-- Custom Poster Web Page -->
     <string name="layout_always_show_landscape_clearlogo">Luôn dùng phông nền kèm logo cho poster ngang</string>
     <string name="layout_always_show_landscape_clearlogo_sub">Bỏ qua poster ngang từ tiện ích và thay thế bằng phông nền có chèn lớp phủ logo trong suốt.</string>
+    <string name="layout_hero_description_auto_scroll">Tự động cuộn phần mô tả</string>
+    <string name="layout_hero_description_auto_scroll_sub">Cuộn chậm các phần mô tả dài trên Trang chủ thay vì cắt ngắn.</string>
     <string name="web_custom_poster_title">Nguồn poster tùy chỉnh</string>
     <string name="web_custom_poster_subtitle">Dán mẫu URL poster vào bên dưới và nhấn Lưu.</string>
     <string name="web_custom_poster_label">Mẫu URL</string>
@@ -1967,12 +1969,6 @@
     <string name="audio_center_mix_unavailable">Trộn kênh trung tâm chỉ khả dụng khi bật hạ kênh âm thanh bằng FFmpeg.</string>
     <string name="audio_maintain_original_audio_on_downmix_title">Giữ nguyên âm lượng gốc khi hạ kênh âm thanh</string>
     <string name="audio_maintain_original_audio_on_downmix_subtitle">Khi tắt, chuẩn hóa khi hạ kênh âm thanh có thể làm giảm âm lượng tổng thể.</string>
-    <string name="audio_downmix_lfe_level">Mức LFE khi hạ kênh âm thanh</string>
-    <string name="audio_downmix_lfe_level_sub">Trộn kênh loa siêu trầm (LFE) vào các loa khác thay vì loại bỏ kênh này. Chỉ áp dụng cho các bố cục không có LFE, ví dụ như 2.0.</string>
-    <string name="audio_downmix_lfe_level_desc">Sử dụng khi bố cục hạ kênh âm thanh không có kênh LFE. Áp dụng từ lần phát lại tiếp theo.</string>
-    <string name="audio_downmix_lfe_level_off">Tắt</string>
-    <string name="audio_downmix_lfe_level_half">50%</string>
-    <string name="audio_downmix_lfe_level_full">100%</string>
 
     <string name="subtitle_dialog_title">Phụ đề</string>
     <string name="subtitle_no_builtin">Không có phụ đề tích hợp</string>

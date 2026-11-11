@@ -227,6 +227,7 @@ fun AddonManagerScreen(
         }
     }
 
+
     val requestManageFromPhoneFocus = {
         coroutineScope.launch {
             repeat(2) { withFrameNanos { } }

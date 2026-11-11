@@ -211,13 +211,7 @@ class PlayerRuntimeController(
         }
     }
 
-    // Resolved per sample so it follows the player across rebuilds.
-    private val bufferedAheadProvider: () -> Long = {
-        _exoPlayer?.let { player -> player.bufferedPosition - player.currentPosition } ?: -1L
-    }
-
     init {
-        PlayerMemoryReporter.bufferedAheadProvider = bufferedAheadProvider
         PlayerMediaSourceFactory.vodCachePlayheadBytesProvider = vodCachePlayheadBytesProvider
     }
 
@@ -288,19 +282,15 @@ class PlayerRuntimeController(
             }
         }
         mediaSourceFactory.logVodCacheStats()
-        PlayerMemoryReporter.stopSampling(context)
         releaseProcessWideReferences()
         mediaSourceFactory.evictCachedSession()
-        releasePlayer(flushPlaybackState = true, trimBufferInBackground = true)
+        releasePlayer()
         playerSession.close()
     }
 
     // These are process wide, so without this the exited player stays reachable until the next one
     // replaces them; the identity checks keep a player that has already started from losing its own.
     private fun releaseProcessWideReferences() {
-        if (PlayerMemoryReporter.bufferedAheadProvider === bufferedAheadProvider) {
-            PlayerMemoryReporter.bufferedAheadProvider = null
-        }
         if (PlayerMediaSourceFactory.vodCachePlayheadBytesProvider === vodCachePlayheadBytesProvider) {
             PlayerMediaSourceFactory.vodCachePlayheadBytesProvider = null
         }
@@ -508,6 +498,12 @@ class PlayerRuntimeController(
     internal var playbackStartedForParentalGuide = false
     internal val skippedFrameTally = PlaybackSkippedFrameTally()
     internal var hasRenderedFirstFrame = false
+    internal var bufferMemoryKeeper: com.nuvio.tv.core.player.BufferMemoryKeeper? = null
+    internal var autoSpeedupLender: com.nuvio.tv.core.player.BufferMemoryKeeper? = null
+    internal var currentManagedBudgetMb: Int = com.nuvio.tv.ui.screens.settings.MemoryBudget.autoBudgetMb
+    internal var lastSeekWallMs: Long = 0L
+    internal var expectedRuntimeMinutes: Int? = savedStateHandle.get<Int>("runtimeMinutes")
+    @Volatile internal var lastAppliedPlayerSettings: com.nuvio.tv.data.local.PlayerSettings? = null
 
     // Prevent the previous stream's end from completing the new stream.
     internal var endDetectionArmed = false
@@ -526,17 +522,6 @@ class PlayerRuntimeController(
     internal var currentBitrateAwareLoadControl: BitrateAwareLoadControl? = null
     /** Parallel chunk buffer overhead (MB) currently deducted from the target buffer size. */
     internal var currentParallelChunkOverheadMb: Int = 0
-    /** Managed custom-buffer budget (MB) sized at build, before the chunk overhead comes off. */
-    internal var currentManagedBudgetMb: Int = com.nuvio.tv.ui.screens.settings.ArcMemoryBudget.autoBudgetMb
-    internal var bufferMemoryKeeper: com.nuvio.tv.core.player.BufferMemoryKeeper? = null
-    // Stock buffers have no keeper; this one only lends memory to the Automatic speed-up and is never attached.
-    internal var autoSpeedupLender: com.nuvio.tv.core.player.BufferMemoryKeeper? = null
-    /** Wall time (elapsedRealtime) of the last seek discontinuity, read by Automatic speed-up. */
-    internal var lastSeekWallMs: Long = 0L
-    /** Title runtime in minutes when known; only a hint for Automatic speed-up's bitrate guess. */
-    internal var expectedRuntimeMinutes: Int? = null
-    /** The settings last pushed onto the media-source factory. */
-    @Volatile internal var lastAppliedPlayerSettings: PlayerSettings? = null
     /** Back buffer (ms) the user configured, captured at build to restore once DV7 status is known. */
     internal var configuredBackBufferMs: Int = 0
     internal var metaVideos: List<Video> = emptyList()

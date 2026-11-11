@@ -67,6 +67,19 @@ internal data class PlaybackLanes(val connections: Int, val chunkBytes: Long, va
             return parts.joinToString(" · ")
         }
 
+        /**
+         * The Auto row: downloads set, requests running now, what the policy is doing, and how long the buffer would last
+         * at the pace it is falling; null without Automatic. Running below set means the extra downloads are still
+         * waiting for their first byte or held back by the server's budget.
+         */
+        fun autoText(hud: AutoSpeedup.Hud?): String? {
+            if (hud == null) return null
+            val parts = mutableListOf("set ${hud.downloads} · running ${hud.requests}")
+            if (hud.state.isNotEmpty()) parts += hud.state
+            if (hud.runwayMs >= 0L) parts += "empty in ${hud.runwayMs / 1000} s at this pace"
+            return parts.joinToString(" · ")
+        }
+
         fun chunkSizeLabel(bytes: Long): String = when {
             bytes < MB -> "${(bytes + KB / 2) / KB} KB"
             bytes % MB == 0L -> "${bytes / MB} MB"

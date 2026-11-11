@@ -162,7 +162,7 @@ internal object AutoSpeedup {
      * Recomputed only on a fresh memory reading, so one reading never counts twice. While seek thumbnails are
      * generating it also leaves them the MemAvailable they need ([thumbFloorBytes]).
      */
-    fun updateReadAhead(roomBytes: Long, thumbFloorBytes: () -> Long = { 0L }) {
+    fun updateReadAhead(roomBytes: Long, thumbFloorBytes: () -> Long = { 0L /* Flow has no thumbnail memory owner. */ }) {
         if (roomReadAtMs == readAheadRoomAtMs && downloads > 1) return
         readAheadRoomAtMs = roomReadAtMs
         val floor = if (downloads > 1) thumbFloorBytes() else 0L
@@ -354,6 +354,7 @@ internal object AutoSpeedup {
     fun onResolved(resolvedUrl: String?) {
         val key = HostSpeeds.keyOf(resolvedUrl) ?: return
         if (policy != null) servedUrl = resolvedUrl
+        preferStorePieces(resolvedUrl)
         if (key == serverKey || policy == null) return
         serverKey = key
         if (key == hostKey) return
@@ -381,6 +382,18 @@ internal object AutoSpeedup {
         Log.i(TAG, "AUTO_SPEEDUP: server $key behind $hostKey perDownloadKbps=${known.perDownloadBps * 8 / 1000}" +
             " pieceMb=${pieceBytes / MB}" + if (restarted) " start downloads=$start" else "")
         if (restarted) noteRequests()
+    }
+
+    private fun preferStorePieces(resolvedUrl: String?) {
+        val p = policy ?: return
+        if (p.preferredPieceBytes > 0L || !StoreHosts.isStoreUrl(resolvedUrl)) return
+        synchronized(pieceLock) {
+            p.preferredPieceBytes = StoreHosts.STORE_PIECE_BYTES
+            val n = if (guessedBps > 0L) p.startFor(guessedBps) else p.downloads
+            if (n > 1) p.pieceBytes = p.rememberedStartPiece(n)
+            pieceBytes = p.pieceBytes
+        }
+        Log.i(TAG, "AUTO_SPEEDUP: store server, pieces of at least ${StoreHosts.STORE_PIECE_BYTES / MB} MB, pieceMb=${pieceBytes / MB}")
     }
 
     /**
@@ -545,12 +558,23 @@ internal object AutoSpeedup {
     private const val PLAN_LOG_MS = 30_000L
 
     /** For the stats HUD: requests now, the server's budget, what one request carries and its wait. */
-    data class Hud(val requests: Int, val budget: Int, val perRequestBps: Long, val firstByteMs: Long)
+    data class Hud(
+        val requests: Int,
+        val budget: Int,
+        val perRequestBps: Long,
+        val firstByteMs: Long,
+        val downloads: Int = 1,
+        val state: String = "",
+        val runwayMs: Long = -1L,
+    )
 
     fun hud(): Hud? {
         val p = policy ?: return null
         val budget = LedgerKey.knownTotal(LedgerKey.of(url)) ?: MAX_IN_FLIGHT
-        return Hud(requestsNow(), budget, p.rawRateNow() ?: p.measuredPerDownloadBps, p.waitMs())
+        return Hud(
+            requestsNow(), budget, p.rawRateNow() ?: p.measuredPerDownloadBps, p.waitMs(),
+            p.downloads, p.stateTag(android.os.SystemClock.elapsedRealtime()), p.runwayNowMs,
+        )
     }
 
     /**

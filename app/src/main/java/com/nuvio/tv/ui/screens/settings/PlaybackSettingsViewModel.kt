@@ -8,7 +8,6 @@ import com.nuvio.tv.data.local.LibassRenderScale
 import com.nuvio.tv.data.local.LibassRenderType
 import com.nuvio.tv.data.local.LibassRenderMode
 import com.nuvio.tv.data.local.InternalPlayerEngine
-import com.nuvio.tv.data.local.DownmixLfeLevel
 import com.nuvio.tv.data.local.NightMode
 import com.nuvio.tv.data.local.Dv7HandlingMode
 import com.nuvio.tv.data.local.PlayerSettings
@@ -148,10 +147,6 @@ class PlaybackSettingsViewModel @Inject constructor(
 
     suspend fun setMaintainOriginalAudioOnDownmix(enabled: Boolean) {
         playerSettingsDataStore.setMaintainOriginalAudioOnDownmix(enabled)
-    }
-
-    suspend fun setDownmixLfeLevel(level: DownmixLfeLevel) {
-        playerSettingsDataStore.setDownmixLfeLevel(level)
     }
 
     suspend fun setTunnelingEnabled(enabled: Boolean) {
@@ -428,6 +423,10 @@ class PlaybackSettingsViewModel @Inject constructor(
         playerSettingsDataStore.setSubtitleOrganizationMode(mode)
     }
 
+    suspend fun setAutoSpeedupEnabled(enabled: Boolean) {
+        playerSettingsDataStore.setAutoSpeedupEnabled(enabled)
+    }
+
     suspend fun setBufferAheadMs(ms: Int) {
         playerSettingsDataStore.setBufferAheadMs(ms)
     }
@@ -458,7 +457,7 @@ class PlaybackSettingsViewModel @Inject constructor(
             return
         }
         val currentChunkMb = Math.ceil(current.parallelChunkSizeKb / 1024.0).toInt()
-        val (adjBuffer, adjChunkMb) = ArcMemoryBudget.enforce(
+        val (adjBuffer, adjChunkMb) = MemoryBudget.enforce(
             mb,
             currentChunkMb,
             current.parallelConnectionCount
@@ -488,13 +487,13 @@ class PlaybackSettingsViewModel @Inject constructor(
         if (!current.useParallelConnections || current.nuvioPerformanceModeEnabled || current.allowLargeTargetBuffer) return
 
         val currentChunkMb = Math.ceil(current.parallelChunkSizeKb / 1024.0).toInt()
-        val (adjBuffer, adjChunkMb) = ArcMemoryBudget.enforce(
-            ArcMemoryBudget.defaultBufferSizeMb,
+        val (adjBuffer, adjChunkMb) = MemoryBudget.enforce(
+            MemoryBudget.defaultBufferSizeMb,
             currentChunkMb,
             current.parallelConnectionCount
         )
         if (adjChunkMb != currentChunkMb ||
-            adjBuffer != ArcMemoryBudget.defaultBufferSizeMb
+            adjBuffer != MemoryBudget.defaultBufferSizeMb
         ) {
             playerSettingsDataStore.updateMemorySettings(
                 targetBufferSizeMb = adjBuffer,
@@ -534,9 +533,9 @@ class PlaybackSettingsViewModel @Inject constructor(
             playerSettingsDataStore.setUseParallelConnections(true)
             return
         }
-        val bufferMb = ArcMemoryBudget.effectiveBufferMb(current.bufferSettings.targetBufferSizeMb)
+        val bufferMb = MemoryBudget.effectiveBufferMb(current.bufferSettings.targetBufferSizeMb)
         val currentChunkMb = Math.ceil(current.parallelChunkSizeKb / 1024.0).toInt()
-        val (adjBuffer, adjChunkMb) = ArcMemoryBudget.enforce(
+        val (adjBuffer, adjChunkMb) = MemoryBudget.enforce(
             bufferMb,
             currentChunkMb,
             current.parallelConnectionCount
@@ -562,8 +561,8 @@ class PlaybackSettingsViewModel @Inject constructor(
         if (count <= current.parallelConnectionCount) {
             playerSettingsDataStore.setParallelConnectionCount(count)
         } else {
-            val bufferMb = ArcMemoryBudget.effectiveBufferMb(current.bufferSettings.targetBufferSizeMb)
-            val maxChunk = ArcMemoryBudget.maxChunkMb(bufferMb, count)
+            val bufferMb = MemoryBudget.effectiveBufferMb(current.bufferSettings.targetBufferSizeMb)
+            val maxChunk = MemoryBudget.maxChunkMb(bufferMb, count)
             val currentChunkMb = Math.ceil(current.parallelChunkSizeKb / 1024.0).toInt()
             val newChunkMb = currentChunkMb.coerceAtMost(maxChunk)
             if (newChunkMb == currentChunkMb) {
@@ -584,8 +583,8 @@ class PlaybackSettingsViewModel @Inject constructor(
             playerSettingsDataStore.setParallelChunkSizeKb(kb)
             return
         }
-        val bufferMb = ArcMemoryBudget.effectiveBufferMb(current.bufferSettings.targetBufferSizeMb)
-        val maxChunk = ArcMemoryBudget.maxChunkMb(bufferMb, current.parallelConnectionCount)
+        val bufferMb = MemoryBudget.effectiveBufferMb(current.bufferSettings.targetBufferSizeMb)
+        val maxChunk = MemoryBudget.maxChunkMb(bufferMb, current.parallelConnectionCount)
         val clampedChunkKb = kb.coerceAtMost(maxChunk * 1024)
         playerSettingsDataStore.setParallelChunkSizeKb(clampedChunkKb)
     }
@@ -676,11 +675,6 @@ class PlaybackSettingsViewModel @Inject constructor(
 
     suspend fun setVodCacheSizeMb(mb: Int) {
         playerSettingsDataStore.setVodCacheSizeMb(mb)
-    }
-
-    suspend fun setAutoSpeedupEnabled(enabled: Boolean) {
-        com.nuvio.tv.core.network.PlaybackSocketFactory.windowEnabled = enabled
-        playerSettingsDataStore.setAutoSpeedupEnabled(enabled)
     }
 
     suspend fun setNuvioPerformanceModeEnabled(enabled: Boolean) {

@@ -23,8 +23,8 @@ import com.nuvio.tv.data.repository.PlaybackIssueReportInput
 import com.nuvio.tv.data.repository.SkipInterval
 import com.nuvio.tv.domain.model.WatchProgress
 import java.io.IOException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -466,6 +466,7 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
 
             _exoPlayer?.let { player ->
                 val pos = player.currentPosition.coerceAtLeast(0L)
+                sampleAutoSpeedup(player, pos)
                 val playerDuration = player.duration
                 if (playerDuration > lastKnownDuration) {
                     lastKnownDuration = playerDuration
@@ -514,7 +515,6 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                         )
                     }
                 }
-                sampleAutoSpeedup(player, pos)
                 recomputeChapterSkipIntervalsIfNeeded()
                 updateActiveSkipInterval(pos)
                 if (!_playbackTimeline.value.isLive) {
@@ -535,7 +535,6 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                         val usedMb = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)
                         val maxMb = runtime.maxMemory() / (1024 * 1024)
                         Log.d(PlayerRuntimeController.TAG, "BUFFER: ahead=${bufAhead}s, loading=$loading, heap=$usedMb/${maxMb}MB, pos=${pos / 1000}s")
-                        bufferMemoryKeeper?.onTick()
                         
                         if (NuvioExoPlayerPerformanceHelper.shouldLogMemoryFootprint()) {
                             val defaultAllocator = _loadControl?.allocator as? androidx.media3.exoplayer.upstream.DefaultAllocator
@@ -2296,7 +2295,11 @@ private fun PlayerRuntimeController.sampleAutoSpeedup(player: Player, positionMs
         roomBytes = roomBytes,
         lowMemory = free?.lowMemory == true
     )
-    AutoSpeedup.updateReadAhead(roomBytes) { 0L }
+    // The thumbnails' memory floor only holds the read-ahead back while their screen holds the film; once it plays,
+    // the buffer comes first and thumbnails decode only with the memory that is left.
+    AutoSpeedup.updateReadAhead(roomBytes) {
+        if (player.playWhenReady) 0L else 0L /* Flow has no thumbnail memory owner. */
+    }
     val fileBitrate = AutoSpeedup.fileBitrate(
         PlaybackByteCounter.contentLengthFor(currentStreamUrl),
         currentVideoSize,

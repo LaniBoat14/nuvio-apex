@@ -205,6 +205,11 @@ fun StreamScreen(
     }
 
     fun launchInternalPlayer(playbackInfo: StreamPlaybackInfo) {
+        if (!playbackInfo.isServerStream) {
+            com.nuvio.tv.ui.screens.player.PlayerPlaybackNetworking.prewarmSelectedPlayback(
+                playbackInfo.url, playbackInfo.headers
+            )
+        }
         viewModel.onInternalPlayerLaunching()
         onStreamSelected(playbackInfo)
     }
@@ -303,8 +308,6 @@ fun StreamScreen(
             viewModel.onEvent(StreamScreenEvent.OnAutoPlayConsumed)
             return@LaunchedEffect
         }
-        // Warm the connection while the player is built.
-        viewModel.prewarmSelectedPlayback(playbackInfo)
         // Torrent streams have url == null but carry an infoHash; navigation
         // builds a torrent:// sentinel URL downstream.
         if (playbackInfo.url != null || (playbackInfo.isTorrent && playbackInfo.infoHash != null)) {
@@ -504,8 +507,6 @@ fun StreamScreen(
                             val playbackInfo = viewModel.resolveStreamForPlayback(stream)
                             if (playbackInfo != null) {
                                 viewModel.persistBingeGroupForStream(stream)
-                                // Warm the connection while the player is built.
-                                viewModel.prewarmSelectedPlayback(playbackInfo)
                                 pendingRestoreOnResume = true
                                 routePlayback(playbackInfo)
                                 viewModel.onEvent(StreamScreenEvent.OnAutoPlayConsumed)

@@ -2,16 +2,16 @@ package com.nuvio.tv.ui.screens.player
 
 import android.content.Context
 import androidx.media3.common.C
-import androidx.media3.exoplayer.ScrubbingModeParameters
 import androidx.media3.common.NuvioEngineConfig
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.ScrubbingModeParameters
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.upstream.DefaultAllocator
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import com.nuvio.tv.data.local.PlayerSettings
-import com.nuvio.tv.ui.screens.settings.ArcMemoryBudget
+import com.nuvio.tv.ui.screens.settings.MemoryBudget
 
 /**
  * Centralizes all Nuvio ExoPlayer performance enhancements behind a single toggle.
@@ -143,18 +143,18 @@ object NuvioExoPlayerPerformanceHelper {
         val effectiveBufferMb = when {
             settings.nuvioPerformanceModeEnabled -> {
                 if (customBuffers && !settings.bufferBudgetManaged) {
-                    ArcMemoryBudget.effectiveBufferMb(bufferSettings.targetBufferSizeMb)
+                    MemoryBudget.effectiveBufferMb(bufferSettings.targetBufferSizeMb)
                 } else {
                     autoMb
                 }
             }
             customBuffers -> {
-                if (settings.bufferBudgetManaged) ArcMemoryBudget.autoBudgetMb
-                else ArcMemoryBudget.effectiveBufferMb(bufferSettings.targetBufferSizeMb)
+                if (settings.bufferBudgetManaged) MemoryBudget.autoBudgetMb
+                else MemoryBudget.effectiveBufferMb(bufferSettings.targetBufferSizeMb)
             }
-            else -> ArcMemoryBudget.defaultBufferSizeMb
+            else -> MemoryBudget.defaultBufferSizeMb
         }
-        calculatedMemoryUsageMb = ArcMemoryBudget.totalUsageMb(
+        calculatedMemoryUsageMb = MemoryBudget.totalUsageMb(
             effectiveBufferMb,
             settings.parallelConnectionCount,
             Math.ceil(settings.parallelChunkSizeKb / 1024.0).toInt(),
@@ -178,14 +178,14 @@ object NuvioExoPlayerPerformanceHelper {
     }
 
     /** The prefetch window playback uses for these settings. */
-    fun downloadWindow(settings: PlayerSettings, context: Context): ArcMemoryBudget.DownloadWindow {
+    fun downloadWindow(settings: PlayerSettings, context: Context): MemoryBudget.DownloadWindow {
         val safeLimitMb = getSafeNativeMemoryLimitMb(context)
         val (automatic, targetMb) = targetBufferFor(settings, safeLimitMb, getAutoBufferMb(context))
         return downloadWindow(settings.nuvioPerformanceModeEnabled, automatic, targetMb, safeLimitMb)
     }
 
     /** The window the player runs with now, from the settings it last applied. */
-    fun currentDownloadWindow(performanceMode: Boolean, context: Context): ArcMemoryBudget.DownloadWindow =
+    fun currentDownloadWindow(performanceMode: Boolean, context: Context): MemoryBudget.DownloadWindow =
         downloadWindow(performanceMode, targetIsAutomatic, targetBufferSizeMb, getSafeNativeMemoryLimitMb(context))
 
     // An automatic target is already all this box should hold, so the window stays at its floor.
@@ -195,7 +195,7 @@ object NuvioExoPlayerPerformanceHelper {
         targetIsAutomatic: Boolean,
         targetBufferMb: Int,
         safeNativeLimitMb: Int
-    ) = ArcMemoryBudget.DownloadWindow(
+    ) = MemoryBudget.DownloadWindow(
         performanceMode,
         safeNativeLimitMb = if (targetIsAutomatic) targetBufferMb else safeNativeLimitMb,
         reserveBufferMb = targetBufferMb.coerceAtLeast(0)
@@ -363,7 +363,7 @@ object NuvioExoPlayerPerformanceHelper {
     ): DefaultLoadControl {
         return if (enabled) {
             val effectiveTargetBufferMb = (targetBufferSizeMb - chunkOverheadMb)
-                .coerceAtLeast(ArcMemoryBudget.MIN_BUFFER_MB)
+                .coerceAtLeast(MemoryBudget.MIN_BUFFER_MB)
             val targetBufferBytes = (effectiveTargetBufferMb.toLong() * 1024L * 1024L)
                 .coerceAtMost(Int.MAX_VALUE.toLong())
                 .toInt()
@@ -441,21 +441,6 @@ object NuvioExoPlayerPerformanceHelper {
     }
 
     // ─── Seek / Scrubbing ─────────────────────────────────────────────────────
-
-    /**
-     * Returns [ScrubbingModeParameters] that disable audio/metadata decoding and
-     * boost codec operating rate for the fastest possible seek, or `null` when
-     * performance mode is off.
-     */
-    fun buildScrubbingParams(): ScrubbingModeParameters? {
-        if (!enabled) return null
-        return ScrubbingModeParameters.Builder()
-            .setDisabledTrackTypes(setOf(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_METADATA))
-            .setShouldIncreaseCodecOperatingRate(true)
-            .setAllowSkippingMediaCodecFlush(true)
-            .setShouldEnableDynamicScheduling(true)
-            .build()
-    }
 
     /**
      * Returns `true` when the seek target [positionMs] falls within the player's
@@ -550,5 +535,14 @@ object NuvioExoPlayerPerformanceHelper {
         } else {
             NuvioEngineConfig.set(NuvioEngineConfig.stockMode())
         }
+    }
+    fun buildScrubbingParams(): ScrubbingModeParameters? {
+        if (!enabled) return null
+        return ScrubbingModeParameters.Builder()
+            .setDisabledTrackTypes(setOf(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_METADATA))
+            .setShouldIncreaseCodecOperatingRate(true)
+            .setAllowSkippingMediaCodecFlush(true)
+            .setShouldEnableDynamicScheduling(true)
+            .build()
     }
 }

@@ -1202,7 +1202,7 @@ internal class ParallelRangeDataSource(
     // Memory-tiered chunk cap: low-RAM devices keep a ceiling of
     // connections + 2; high-RAM gets two extra chunks of LRU headroom.
     private val sessionChunkCap: Int = effectivePrefetchDepth +
-        if (com.nuvio.tv.ui.screens.settings.ArcMemoryBudget.isLowRamTier) 2 else 4
+        if (com.nuvio.tv.ui.screens.settings.MemoryBudget.isLowRamTier) 2 else 4
 
     override fun open(dataSpec: DataSpec): Long {
         if (resources.released) throw IOException("Diagnostic session is closed")
@@ -1663,12 +1663,13 @@ internal class ParallelRangeDataSource(
         val chunk = currentChunk ?: return C.RESULT_END_OF_INPUT
         val available = chunk.size - currentChunkReadOffset
         if (available <= 0) {
-            // Current chunk exhausted, move to next
-            if (chunk === bootstrapChunk) {
+            val wasBootstrap = chunk === bootstrapChunk
+            if (wasBootstrap) {
                 bootstrapChunk = null
                 bootstrapStartPosition = C.TIME_UNSET
             }
             currentChunk = null
+            if (!wasBootstrap && position / chunkSize == currentChunkIndex) return C.RESULT_END_OF_INPUT
             return read(buffer, offset, length)
         }
 
@@ -2885,11 +2886,13 @@ internal class ParallelRangeDataSource(
         val chunk = currentChunk ?: return C.RESULT_END_OF_INPUT
         val available = chunk.size - currentChunkReadOffset
         if (available <= 0) {
-            if (chunk === bootstrapChunk) {
+            val wasBootstrap = chunk === bootstrapChunk
+            if (wasBootstrap) {
                 bootstrapChunk = null
                 bootstrapStartPosition = C.TIME_UNSET
             }
             currentChunk = null
+            if (!wasBootstrap && position / chunkSize == currentChunkIndex) return C.RESULT_END_OF_INPUT
             return read(buffer, length)
         }
 

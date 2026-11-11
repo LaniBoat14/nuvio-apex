@@ -146,9 +146,15 @@
 # AndroidX components referenced by extensions
 -keep class androidx.fragment.app.** { *; }
 -keep interface androidx.fragment.app.** { *; }
+-keep class androidx.appcompat.app.** { *; }
+-keep interface androidx.appcompat.app.** { *; }
 
 -dontwarn java.beans.ConstructorProperties
 -dontwarn java.beans.Transient
+
+# Flow: Gson snapshot models must keep their on-disk field names across updates.
+-keep class com.nuvio.tv.data.local.CachedNextUpItem { *; }
+-keep class com.nuvio.tv.data.local.CachedInProgressItem { *; }
 
 # Arc HUD reads the platform AudioTrack from Media3's sink by field name.
 -keepclassmembers class androidx.media3.exoplayer.audio.DefaultAudioSink {

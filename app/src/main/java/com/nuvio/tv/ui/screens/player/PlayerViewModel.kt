@@ -1,5 +1,25 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.data.local.InternalPlayerEngine
+
+import kotlinx.coroutines.withContext
+
+import kotlinx.coroutines.Dispatchers
+
+import java.net.URI
+
+import androidx.media3.common.MimeTypes
+
+import androidx.media3.common.Player
+
+import androidx.media3.common.C
+
+import android.os.Debug
+
+import com.nuvio.tv.core.player.DoviBridge
+
+import com.nuvio.tv.core.player.DolbyVisionConversionStats
+
 import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -47,16 +67,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
-import com.nuvio.tv.data.local.InternalPlayerEngine
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
-import java.net.URI
-import androidx.media3.common.MimeTypes
-import androidx.media3.common.Player
-import androidx.media3.common.C
-import android.os.Debug
-import com.nuvio.tv.core.player.DoviBridge
-import com.nuvio.tv.core.player.DolbyVisionConversionStats
 
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
@@ -667,6 +677,9 @@ class PlayerViewModel @Inject constructor(
         PlaybackLanes.requestsText(hud.lanes?.takeIf { it.auto }?.let { AutoSpeedup.hud() })?.let {
             rows += StatsRow("Requests", it, StatsDot.NONE, marquee = true)
         }
+        PlaybackLanes.autoText(hud.lanes?.takeIf { it.auto }?.let { AutoSpeedup.hud() })?.let {
+            rows += StatsRow("Auto", it, StatsDot.NONE, marquee = true)
+        }
         lastPingMs?.takeIf { it.matches(hud.transfer) }?.let { ping ->
             rows += StatsRow("Server latency", "${ping.elapsedMs} ms", StatsDot.NONE)
         }
@@ -946,10 +959,11 @@ class PlayerViewModel @Inject constructor(
         else -> "${bytes / 1024L} KB"
     }
 
-
     fun getCurrentStreamUrl(): String = controller.getCurrentStreamUrl()
 
     fun getCurrentHeaders(): Map<String, String> = controller.getCurrentHeaders()
+
+    internal fun flowStreamInfo(): StreamInfoData = controller.buildStreamInfoData()
 
     fun getCurrentFileSizeBytes(): Long? = controller.currentVideoSize
 

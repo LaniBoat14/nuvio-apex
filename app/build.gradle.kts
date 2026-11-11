@@ -119,15 +119,16 @@ val useLocalFfmpegDecoder = truthy(
 val releaseStoreFilePath = env("NUVIO_RELEASE_STORE_FILE")
     ?: localProperties.getProperty("NUVIO_RELEASE_STORE_FILE")
 val releaseKeyAliasValue = env("NUVIO_RELEASE_KEY_ALIAS")
-    ?: localProperties.getProperty("NUVIO_RELEASE_KEY_ALIAS", "nuviotv")
+    ?: localProperties.getProperty("NUVIO_RELEASE_KEY_ALIAS")
 val releaseKeyPasswordValue = env("NUVIO_RELEASE_KEY_PASSWORD")
-    ?: localProperties.getProperty("NUVIO_RELEASE_KEY_PASSWORD", "815787")
+    ?: localProperties.getProperty("NUVIO_RELEASE_KEY_PASSWORD")
 val releaseStorePasswordValue = env("NUVIO_RELEASE_STORE_PASSWORD")
-    ?: localProperties.getProperty("NUVIO_RELEASE_STORE_PASSWORD", "815787")
+    ?: localProperties.getProperty("NUVIO_RELEASE_STORE_PASSWORD")
 
 android {
     namespace = "com.nuvio.tv"
     compileSdk = 36
+    buildToolsVersion = "36.0.0"
     ndkVersion = "29.0.14206865"
 
     defaultConfig {
@@ -135,8 +136,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1075001
-        versionName = "0.2.0"
+        versionCode = 1077001
+        versionName = "0.7.0"
 
         buildConfigField("String", "PARENTAL_GUIDE_API_URL", "\"${localProperties.getProperty("PARENTAL_GUIDE_API_URL", "")}\"")
         buildConfigField("String", "INTRODB_API_URL", "\"${localProperties.getProperty("INTRODB_API_URL", "")}\"")
@@ -177,10 +178,9 @@ android {
         buildConfigField("String", "SENTRY_DSN", buildConfigString(sentryDsn))
 
         // In-app updater (GitHub Releases)
-        buildConfigField("String", "GITHUB_OWNER", "\"LaniBoat14\"")
-        buildConfigField("String", "GITHUB_REPO", "\"nuvio-apex\"")
-        // The Nuvio release this build is rebased on; shown in About. Change when rebasing onto a new Nuvio beta.
-        buildConfigField("String", "NUVIO_BASE", "\"1.1.0-beta.12\"")
+        buildConfigField("String", "NUVIO_BASE", "\"1.1.0\"")
+        buildConfigField("String", "GITHUB_OWNER", buildConfigString(env("FLOW_GITHUB_OWNER") ?: localProperties.getProperty("FLOW_GITHUB_OWNER", "LaniBoat14")))
+        buildConfigField("String", "GITHUB_REPO", buildConfigString(env("FLOW_GITHUB_REPO") ?: localProperties.getProperty("FLOW_GITHUB_REPO", "nuvio-apex")))
     }
 
     flavorDimensions += "distribution"
@@ -188,6 +188,7 @@ android {
         create("full") {
             dimension = "distribution"
             buildConfigField("boolean", "FEATURE_PLUGINS_ENABLED", "true")
+            // Flow installs signed APKs from its own release feed.
             buildConfigField("boolean", "FEATURE_IN_APP_UPDATES_ENABLED", "true")
             buildConfigField("boolean", "FEATURE_IN_APP_TRAILERS_ENABLED", "true")
             buildConfigField("boolean", "FEATURE_EXTERNAL_TRAILERS_ENABLED", "true")
@@ -218,7 +219,8 @@ android {
         create("release") {
             keyAlias = releaseKeyAliasValue
             keyPassword = releaseKeyPasswordValue
-            storeFile = releaseStoreFilePath?.let(::file) ?: file("../nuviotv.jks")
+            storeFile = releaseStoreFilePath?.let(::file)
+                ?: error("NUVIO_RELEASE_STORE_FILE must point to the Apex signing keystore")
             storePassword = releaseStorePasswordValue
         }
     }
@@ -226,6 +228,7 @@ android {
     buildTypes {
         debug {
             signingConfig = signingConfigs.getByName("release")
+            applicationIdSuffix = ".debug"
             isDebuggable = parseBooleanProperty(providers.gradleProperty("debuggable").orNull)
             isMinifyEnabled = false
 
@@ -307,14 +310,10 @@ android {
         abi {
             isEnable = !buildingAppBundle
             reset()
-            // Apex: CI sets -PapexArm32Only for the 32-bit Onn 4K Plus test device.
-            if (providers.gradleProperty("apexArm32Only").orNull == "true") {
-                include("armeabi-v7a")
-                isUniversalApk = false
-            } else {
-                include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
-                isUniversalApk = true
-            }
+            // The target Onn 4K Plus is a 32-bit armeabi-v7a device. Keeping one ABI
+            // makes the in-place update smaller and avoids shipping unused native code.
+            include("armeabi-v7a")
+            isUniversalApk = false
         }
     }
 
@@ -371,10 +370,6 @@ android {
 }
 
 androidComponents {
-    onVariants(selector().withBuildType("debug")) { variant ->
-        val isPlaystore = variant.productFlavors.any { it.second == "playstore" }
-        variant.applicationId.set(if (isPlaystore) "com.nuvio.appdebug" else "com.nuviodebug.com")
-    }
     // Only the full flavor ships the in-app updater.
     onVariants(selector().withFlavor("distribution" to "full")) { variant ->
         // AGP makes no ART profile for debuggable variants, and ART ignores .dm files for them anyway.

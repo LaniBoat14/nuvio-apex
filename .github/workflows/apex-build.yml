@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: "compile = purity + Kotlin compile gate; release = also tests, signed APK, test pre-release"
+        description: "compile = Kotlin compile gate; release = also tests, signed APK, test pre-release"
         type: choice
         options: [compile, release]
         default: compile
@@ -23,14 +23,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
+      FLOW_GITHUB_OWNER: LaniBoat14
+      FLOW_GITHUB_REPO: nuvio-apex
       CI_USE_DEBUG_SIGNING: "false"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Stock purity
-        run: python3 apex/apex_purity.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -86,13 +86,13 @@ jobs:
       - name: Compile gate (main and unit-test Kotlin)
         run: |
           chmod +x gradlew
-          ./gradlew :app:compileFullReleaseKotlin :app:compileFullReleaseUnitTestKotlin --max-workers=2 --no-daemon --console=plain --stacktrace "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" -Pkotlin.compiler.execution.strategy=in-process -PapexArm32Only=true
+          ./gradlew :app:compileFullReleaseKotlin :app:compileFullReleaseUnitTestKotlin --max-workers=2 --no-daemon --console=plain --stacktrace "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" -Pkotlin.compiler.execution.strategy=in-process 
       - name: Unit tests
         if: inputs.stage == 'release'
-        run: ./gradlew :app:testFullReleaseUnitTest --max-workers=2 --no-daemon --console=plain --stacktrace "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" -Pkotlin.compiler.execution.strategy=in-process -PapexArm32Only=true
+        run: ./gradlew :app:testFullReleaseUnitTest --max-workers=2 --no-daemon --console=plain --stacktrace "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" -Pkotlin.compiler.execution.strategy=in-process 
       - name: Assemble signed release
         if: inputs.stage == 'release'
-        run: ./gradlew :app:assembleFullRelease --max-workers=2 --no-daemon --console=plain --stacktrace "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" -Pkotlin.compiler.execution.strategy=in-process -PapexArm32Only=true
+        run: ./gradlew :app:assembleFullRelease --max-workers=2 --no-daemon --console=plain --stacktrace "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" -Pkotlin.compiler.execution.strategy=in-process 
       - name: Collect failure diagnostics
         if: failure()
         run: |
@@ -137,7 +137,7 @@ jobs:
         run: |
           case "$TAG" in [0-9]*|v[0-9]*) echo "Tag must not look like a version"; exit 1;; esac
           gh release delete "$TAG" --cleanup-tag --yes >/dev/null 2>&1 || true
-          gh release create "$TAG" --target "$GITHUB_SHA" --prerelease --title "Apex test $TAG" --notes "Test build, not an update. Nuvio Apex: stock beta.11 base with Arc network engine, glass analytics overlay, lossless audio and Dolby Vision." app/build/outputs/apk/full/release/*.apk
+          gh release create "$TAG" --target "$GITHUB_SHA" --prerelease --title "Apex test $TAG" --notes "Test build, not an update. Nuvio Apex test build." app/build/outputs/apk/full/release/*.apk
       - name: Publish release for the in-app updater
         if: inputs.stage == 'release' && inputs.release_version != ''
         env:
@@ -147,7 +147,7 @@ jobs:
         run: |
           case "$VERSION" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "release_version must look like 0.1.0"; exit 1;; esac
           if gh release view "$VERSION" >/dev/null 2>&1; then echo "Release $VERSION already exists; refusing to replace a published release."; exit 1; fi
-          BASE=$(grep -o 'NUVIO_BASE", "\\"[^"\\]*' app/build.gradle.kts | sed 's/.*\\"//')
+          BASE=1.1.0
           gh release create "$VERSION" --target "$GITHUB_SHA" --latest --title "Nuvio Apex $VERSION" --notes "Nuvio Apex $VERSION, based on Nuvio $BASE. Install over your current Apex; settings are kept." app/build/outputs/apk/full/release/*.apk
       - name: Remove private inputs
         if: always()

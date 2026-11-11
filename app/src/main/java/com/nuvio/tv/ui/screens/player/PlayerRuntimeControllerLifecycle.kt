@@ -13,8 +13,7 @@ internal fun PlayerRuntimeController.releasePlayer() {
 internal fun PlayerRuntimeController.releasePlayer(
     flushPlaybackState: Boolean,
     preserveRecovery: Boolean = false,
-    keepTorrentStream: Boolean = false,
-    trimBufferInBackground: Boolean = false
+    keepTorrentStream: Boolean = false
 ) {
     if (!preserveRecovery) {
         playbackRecoveryJob?.cancel()
@@ -114,13 +113,6 @@ internal fun PlayerRuntimeController.releasePlayer(
     mpvStableProgressResetJob?.cancel()
     mpvStableProgressResetJob = null
     releaseMpvPlayer()
-    // Leaving the player: the playback thread would free the whole buffer while stop() and clearVideoSurface() wait
-    // for it on Main, so that is done on a background thread once the player is gone.
-    val deferredTrim = if (trimBufferInBackground) {
-        (_loadControl as? com.nuvio.tv.core.player.BufferBudgetControl)?.stopTrim?.also { it.deferred = true }
-    } else {
-        null
-    }
     _exoPlayer?.let { player ->
         runCatching { player.playWhenReady = false }
         runCatching { player.pause() }
@@ -131,9 +123,8 @@ internal fun PlayerRuntimeController.releasePlayer(
         runCatching { player.release() }
     }
     _exoPlayer = null
-    deferredTrim?.trimInBackground()
-    attachBufferMemoryKeeper(null)
     activeAssVideoEffect = null
+    attachBufferMemoryKeeper(null)
     _loadControl = null
     currentBitrateAwareLoadControl = null
     currentParallelChunkOverheadMb = 0

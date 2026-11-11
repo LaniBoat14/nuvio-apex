@@ -1302,13 +1302,6 @@ class StreamScreenViewModel @Inject constructor(
         }
     }
 
-    fun prewarmSelectedPlayback(playbackInfo: StreamPlaybackInfo) {
-        if (playbackInfo.isServerStream) return
-        com.nuvio.tv.ui.screens.player.PlayerPlaybackNetworking.prewarmSelectedPlayback(
-            playbackInfo.url, playbackInfo.headers
-        )
-    }
-
     suspend fun resolveStreamForPlayback(stream: Stream, saveLastLink: Boolean = true): StreamPlaybackInfo? {
         stream.serverTarget?.let { target -> return prepareServerStream(stream, target) }
         if (stream.youTubeIdToResolve() != null) {
