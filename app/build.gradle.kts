@@ -136,8 +136,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1077002
-        versionName = "0.7.0-e2"
+        versionCode = 1077001
+        versionName = "0.7.0"
 
         buildConfigField("String", "PARENTAL_GUIDE_API_URL", "\"${localProperties.getProperty("PARENTAL_GUIDE_API_URL", "")}\"")
         buildConfigField("String", "INTRODB_API_URL", "\"${localProperties.getProperty("INTRODB_API_URL", "")}\"")
@@ -178,6 +178,7 @@ android {
         buildConfigField("String", "SENTRY_DSN", buildConfigString(sentryDsn))
 
         // In-app updater (GitHub Releases)
+        buildConfigField("String", "NUVIO_BASE", "\"1.1.0\"")
         buildConfigField("String", "GITHUB_OWNER", buildConfigString(env("FLOW_GITHUB_OWNER") ?: localProperties.getProperty("FLOW_GITHUB_OWNER", "LaniBoat14")))
         buildConfigField("String", "GITHUB_REPO", buildConfigString(env("FLOW_GITHUB_REPO") ?: localProperties.getProperty("FLOW_GITHUB_REPO", "nuvio-apex")))
     }
@@ -254,7 +255,6 @@ android {
             buildConfigField("String", "SPONSOR_NAMES", buildConfigString(sponsorNames))
         }
         release {
-            applicationIdSuffix = ".debug"
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

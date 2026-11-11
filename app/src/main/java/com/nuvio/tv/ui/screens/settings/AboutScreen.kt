@@ -132,7 +132,7 @@ fun AboutSettingsContent(
                             )
 
                             Text(
-                                text = "Nuvio Apex · " + BuildConfig.VERSION_NAME + "\nUpstream source baseline: Nuvio " + BuildConfig.VERSION_NAME.substringBefore(".flow."),
+                                text = "Nuvio Apex · " + BuildConfig.VERSION_NAME + "\nBased on Nuvio " + BuildConfig.NUVIO_BASE,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = NuvioTheme.colors.TextSecondary,
                                 textAlign = TextAlign.Center
@@ -142,8 +142,8 @@ fun AboutSettingsContent(
 
                             Text(
                                 text = if (BuildConfig.GITHUB_OWNER.isBlank() || BuildConfig.GITHUB_REPO.isBlank())
-                                    "Flow update hosting not configured"
-                                else "Flow updates: ${BuildConfig.GITHUB_OWNER}/${BuildConfig.GITHUB_REPO}",
+                                    "Apex update hosting not configured"
+                                else "Apex updates: ${BuildConfig.GITHUB_OWNER}/${BuildConfig.GITHUB_REPO}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = NuvioTheme.colors.TextSecondary,
                                 textAlign = TextAlign.Center

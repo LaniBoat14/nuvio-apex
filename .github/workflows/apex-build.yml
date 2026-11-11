@@ -1,17 +1,27 @@
-name: Apex E build
+name: Apex build
 on:
   workflow_dispatch:
-  push:
-    branches: [apex-e2]
+    inputs:
+      stage:
+        description: "compile = Kotlin compile gate; release = also tests, signed APK, test pre-release"
+        type: choice
+        options: [compile, release]
+        default: compile
+      tag:
+        description: "Pre-release tag for stage=release (must not look like a version)"
+        default: test-apex
+      release_version:
+        description: "stage=release only: leave empty for a test pre-release; set to a version such as 0.1.0 to publish it as the real release the in-app updater offers"
+        default: ""
 permissions:
   contents: write
 concurrency:
-  group: apex-e-build-${{ github.ref }}
+  group: apex-build-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     env:
       FLOW_GITHUB_OWNER: LaniBoat14
       FLOW_GITHUB_REPO: nuvio-apex
@@ -19,6 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-java@v4
         with:
@@ -30,27 +41,17 @@ jobs:
           log-accepted-android-sdk-licenses: false
       - name: Install Android components
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
-      - name: Check required source inputs
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          required = [
-              "app/src/full/java/com/nuvio/tv/core/build/AppFeaturePolicy.kt",
-              "app/src/playstore/java/com/nuvio/tv/core/build/AppFeaturePolicy.kt",
-              "app/src/main/java/com/nuvio/tv/core/build/TrailerPlaybackMode.kt",
-              "app/src/main/res/raw/isrgrootx1.pem",
-              "app/src/main/res/raw/isrg_root_x2.pem",
-              "gradle/wrapper/gradle-wrapper.jar",
-          ]
-          missing = [name for name in required if not Path(name).is_file()]
-          if missing:
-              raise SystemExit("Incomplete source checkout: " + ", ".join(missing))
-          print("Required source packages, public certificates and wrapper are present.")
-          PY
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: apex-gradle-${{ hashFiles('**/*.gradle*', 'gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: apex-gradle-
       - name: Generate localhost TLS test fixture
         run: |
           mkdir -p app/src/test/resources
-          keytool -genkeypair -alias subtitle-test -keyalg RSA -keysize 2048 -validity 3650 -storetype PKCS12 -keystore app/src/test/resources/subtitle-redirect-test.p12 -storepass changeit -keypass changeit -dname "CN=127.0.0.1" -ext "SAN=ip:127.0.0.1"
+          [ -f app/src/test/resources/subtitle-redirect-test.p12 ] || keytool -genkeypair -alias subtitle-test -keyalg RSA -keysize 2048 -validity 3650 -storetype PKCS12 -keystore app/src/test/resources/subtitle-redirect-test.p12 -storepass changeit -keypass changeit -dname "CN=127.0.0.1" -ext "SAN=ip:127.0.0.1"
       - name: Restore private build configuration
         env:
           FLOW_KEYSTORE_BASE64: ${{ secrets.FLOW_KEYSTORE_BASE64 }}
@@ -82,12 +83,17 @@ jobs:
                   text = re.sub(pattern, lambda _: line, text) if re.search(pattern, text) else text + "\n" + line + "\n"
               path.write_text(text)
           PY
-      - name: Test and assemble optimized Flow
+      - name: Compile gate (main and unit-test Kotlin)
         run: |
           chmod +x gradlew
-          ./gradlew :app:testFullReleaseUnitTest --max-workers=2 --no-daemon --console=plain --stacktrace "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" -Pkotlin.compiler.execution.strategy=in-process
-          ./gradlew :app:assembleFullRelease --max-workers=2 --no-daemon --console=plain --stacktrace "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" -Pkotlin.compiler.execution.strategy=in-process
-      - name: Collect test failure diagnostics
+          ./gradlew :app:compileFullReleaseKotlin :app:compileFullReleaseUnitTestKotlin --max-workers=2 --no-daemon --console=plain --stacktrace "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" -Pkotlin.compiler.execution.strategy=in-process 
+      - name: Unit tests
+        if: inputs.stage == 'release'
+        run: ./gradlew :app:testFullReleaseUnitTest --max-workers=2 --no-daemon --console=plain --stacktrace "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" -Pkotlin.compiler.execution.strategy=in-process 
+      - name: Assemble signed release
+        if: inputs.stage == 'release'
+        run: ./gradlew :app:assembleFullRelease --max-workers=2 --no-daemon --console=plain --stacktrace "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" -Pkotlin.compiler.execution.strategy=in-process 
+      - name: Collect failure diagnostics
         if: failure()
         run: |
           python3 - <<'PY'
@@ -98,36 +104,51 @@ jobs:
                   for failure in list(case.findall('failure')) + list(case.findall('error')):
                       print(case.get('classname'), case.get('name'), failure.text or failure.get('message'))
           PY
-      - name: Preserve unit test reports
+      - name: Preserve reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: apex-e-test-reports
+          name: apex-reports
           path: |
             app/build/test-results/
             app/build/reports/tests/
           if-no-files-found: ignore
-      - name: Verify expected Flow APK
+      - name: Verify APK
+        if: inputs.stage == 'release'
         run: |
           APK=app/build/outputs/apk/full/release/app-full-armeabi-v7a-release.apk
           test -f "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "$APK"
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep "package: name='com.nuvioapex.tv.debug'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep "package: name='com.nuvioapex.tv'"
+          unzip -l "$APK" | grep -E "assets/dexopt/baseline.prof|assets/updater_dm/index.properties"
       - uses: actions/upload-artifact@v4
+        if: inputs.stage == 'release'
         with:
-          name: apex-e-signed-apk
+          name: apex-signed-apk
           path: app/build/outputs/apk/full/release/*.apk
           if-no-files-found: error
           retention-days: 14
-      - name: Publish test build for fast download
+      - name: Publish test pre-release
+        if: inputs.stage == 'release' && inputs.release_version == ''
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
         run: |
-          # A tag and title that are not a version, so the in-app updater never offers it.
-          TAG=test-apex-e2
+          case "$TAG" in [0-9]*|v[0-9]*) echo "Tag must not look like a version"; exit 1;; esac
           gh release delete "$TAG" --cleanup-tag --yes >/dev/null 2>&1 || true
-          gh release create "$TAG" --target "$GITHUB_SHA" --prerelease --title "Apex E2 test (E1 plus Nuvio 1.1.0, Arc store pieces, runway response, Auto row)" --notes "Test build, not an update. Apex E1 plus official Nuvio 1.1.0, Arc nt.stable store-server pieces, the runway response (refills a falling buffer early), one-at-a-time hand-back, and an Auto row in the stats overlay. Installs next to Apex as com.nuvioapex.tv.debug." app/build/outputs/apk/full/release/*.apk
+          gh release create "$TAG" --target "$GITHUB_SHA" --prerelease --title "Apex test $TAG" --notes "Test build, not an update. Nuvio Apex test build." app/build/outputs/apk/full/release/*.apk
+      - name: Publish release for the in-app updater
+        if: inputs.stage == 'release' && inputs.release_version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.release_version }}
+        run: |
+          case "$VERSION" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "release_version must look like 0.1.0"; exit 1;; esac
+          if gh release view "$VERSION" >/dev/null 2>&1; then echo "Release $VERSION already exists; refusing to replace a published release."; exit 1; fi
+          BASE=1.1.0
+          gh release create "$VERSION" --target "$GITHUB_SHA" --latest --title "Nuvio Apex $VERSION" --notes "Nuvio Apex $VERSION, based on Nuvio $BASE. Install over your current Apex; settings are kept." app/build/outputs/apk/full/release/*.apk
       - name: Remove private inputs
         if: always()
         run: rm -f apex-signing.keystore local.properties local.dev.properties
