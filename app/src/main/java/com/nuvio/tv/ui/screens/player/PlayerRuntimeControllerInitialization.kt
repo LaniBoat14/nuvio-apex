@@ -2616,8 +2616,10 @@ private class SubtitleOffsetRenderersFactory(
             Log.w(PlayerRuntimeController.TAG, "STHRESH: DIRECT start threshold -> $reducedStartThresholdFrames frames")
         }
         var speedAwareSink: PlaybackSpeedAwareAudioSink? = null
+        val smallBox = BufferSizing.isSmallBox(NuvioExoPlayerPerformanceHelper.getDevicePhysicalRamBytes(context))
         val iecAudioSink = IecPassthroughAudioSink(
             sink = baseAudioSink,
+            trueHdBufferTargetMs = com.nuvio.tv.ui.screens.player.iec.IecStallMargin.trueHdBufferMs(smallBox),
             hbrIecEnabled = !useSystemPassthrough && !forceOpticalPassthrough && !bluetoothForcePcm && !iecOff,
             onIecBecameReady = {
                 Handler(Looper.getMainLooper()).post {
