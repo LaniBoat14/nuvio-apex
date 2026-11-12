@@ -3300,6 +3300,7 @@ internal fun PlayerRuntimeController.applyMediaSourceFactorySettings(playerSetti
     }
     mediaSourceFactory.customNetworkEnabled = playerSettings.parallelNetworkEnabled
     mediaSourceFactory.autoSpeedupEnabled = playerSettings.autoSpeedupEnabled
+    AutoSpeedup.apexExtras = playerSettings.autoSpeedupEnabled && playerSettings.apexExtrasEnabled
     com.nuvio.tv.core.network.PlaybackSocketFactory.windowEnabled = playerSettings.autoSpeedupEnabled
     mediaSourceFactory.nuvioPerformanceModeEnabled = playerSettings.nuvioPerformanceModeEnabled
     mediaSourceFactory.nativeEngineEnabled = playerSettings.nuvioPerformanceModeEnabled

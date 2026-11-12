@@ -101,6 +101,14 @@ internal fun PlaybackBufferNetworkSection(
     if (settings.autoSpeedupEnabled && settings.parallelNetworkEnabled) {
         SettingsNote(text = stringResource(R.string.playback_net_auto_speedup_custom_note))
     }
+    if (settings.autoSpeedupEnabled) {
+        SettingsToggleRow(
+            title = stringResource(R.string.playback_net_apex_extras),
+            subtitle = stringResource(R.string.playback_net_apex_extras_sub),
+            checked = settings.apexExtrasEnabled,
+            onToggle = { onUpdate { setApexExtrasEnabled(!settings.apexExtrasEnabled) } }
+        )
+    }
     ParallelNetworkControls(settings = settings, updateMemory = updateMemory)
 }
 
