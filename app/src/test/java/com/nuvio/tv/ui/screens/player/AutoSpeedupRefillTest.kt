@@ -122,12 +122,11 @@ class AutoSpeedupRefillTest {
         // 60 s target: low mark 10 s.
         p.play(40, 70_000, aheadPerSecondMs = -800)
         assertEquals(8, p.downloads)
-        // The runway (see AutoSpeedupRunwayTest) answers a steady fall before the low mark; the dip is its backstop.
-        assertTrue(log.any { it.contains("boost dip") || it.contains("boost runway") })
+        assertTrue(log.any { it.contains("boost dip") })
     }
 
     @Test
-    fun `a refilled buffer hands the boost back one download at a time, a comfortable minute each`() {
+    fun `a refilled buffer hands the boost back in one step after a comfortable minute`() {
         val p = steady(2)
         seek()
         p.play(1, 0)
@@ -136,12 +135,8 @@ class AutoSpeedupRefillTest {
         assertEquals(8, p.downloads)
         assertTrue(refills.any { it.startsWith("refill seek tookMs=") })
         p.play(62, 120_000, loading = false)
-        assertEquals(7, p.downloads)
-        assertTrue(log.last().contains("comfortable after the refill, one back"))
-        p.play(62 * 5, 120_000, loading = false)
         assertEquals(2, p.downloads)
         assertTrue(log.last().contains("comfortable after the refill"))
-        assertFalse(log.last().contains("one back"))
         // Stays there while comfortable.
         assertEquals(2, p.play(120, 120_000, loading = false))
     }
@@ -167,12 +162,12 @@ class AutoSpeedupRefillTest {
         seek()
         p.play(1, 0)
         p.play(30, 300_000, aheadPerSecondMs = 2_000)
-        p.play(62 * 6, 120_000, loading = false)
+        p.play(62, 120_000, loading = false)
         assertEquals(2, p.downloads)
         p.play(70, 70_000, aheadPerSecondMs = -800)
         assertEquals(8, p.downloads)
         p.play(20, 300_000, aheadPerSecondMs = 2_000)
-        p.play(62 * 5, 120_000, loading = false)
+        p.play(62, 120_000, loading = false)
         assertEquals(3, p.downloads)
     }
 
@@ -182,7 +177,7 @@ class AutoSpeedupRefillTest {
         seek()
         p.play(1, 0)
         p.play(30, 300_000, aheadPerSecondMs = 2_000)
-        p.play(62 * 6, 120_000, loading = false)
+        p.play(62, 120_000, loading = false)
         val changes = log.size
         p.play(600, 120_000, loading = false)
         assertEquals(changes, log.size)

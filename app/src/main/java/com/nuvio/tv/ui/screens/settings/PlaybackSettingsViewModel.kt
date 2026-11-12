@@ -423,6 +423,10 @@ class PlaybackSettingsViewModel @Inject constructor(
         playerSettingsDataStore.setSubtitleOrganizationMode(mode)
     }
 
+    suspend fun setApexExtrasEnabled(enabled: Boolean) {
+        playerSettingsDataStore.setApexExtrasEnabled(enabled)
+    }
+
     suspend fun setAutoSpeedupEnabled(enabled: Boolean) {
         playerSettingsDataStore.setAutoSpeedupEnabled(enabled)
     }

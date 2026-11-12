@@ -424,6 +424,7 @@ internal object AutoSpeedup {
             firstByteMs = -1L
             firstByteSamples = 0
             val p = AutoSpeedupPolicy(limits.maxDownloads, pieceBytes, limits.smallBox)
+            p.extras = apexExtras
             p.pieceBudgetBytes = limits.pieceBudgetBytes
             p.readAheadMaxBytes = limits.readAheadMaxBytes
             val limit = hostKey?.let { HostSpeeds.limitOf(it) }
@@ -513,7 +514,7 @@ internal object AutoSpeedup {
         remembered = null
         PlaybackLine.clear()
         planLoggedLent = -1L
-        if (wasOn) ParallelRangeDataSource.releaseRetainedSessionIfIdle()
+        if (wasOn) ParallelRangeDataSource.handOffRetainedSessionIfIdle()
     }
 
     /**
@@ -567,6 +568,10 @@ internal object AutoSpeedup {
         val state: String = "",
         val runwayMs: Long = -1L,
     )
+
+    /** Apex extras (Settings, Playback, Buffer and network): off, the speed-up is Arc's engine unchanged. */
+    @Volatile
+    var apexExtras: Boolean = false
 
     fun hud(): Hud? {
         val p = policy ?: return null

@@ -54,8 +54,9 @@ class AutoSpeedupRunwayTest {
     }
 
     /** A film running on [n] downloads with a healthy buffer of [aheadMs]. */
-    private fun steady(n: Int, aheadMs: Long = 40_000L, targetMs: Long = 60_000L): AutoSpeedupPolicy {
+    private fun steady(n: Int, aheadMs: Long = 40_000L, targetMs: Long = 60_000L, on: Boolean = true): AutoSpeedupPolicy {
         val p = AutoSpeedupPolicy(8)
+        p.extras = on
         p.preset(n)
         ahead = aheadMs
         p.play(12, 120_000, loading = false, targetMs = targetMs)
@@ -141,6 +142,39 @@ class AutoSpeedupRunwayTest {
         p.play(20, 300_000, aheadPerSecondMs = 2_000)
         p.play(62 * 5, 120_000, loading = false)
         assertEquals(3, p.downloads)
+    }
+
+    @Test
+    fun `with the extras off a falling buffer waits for the low mark, as Arc does`() {
+        val p = steady(2, on = false)
+        p.play(40, 70_000, aheadPerSecondMs = -800)
+        assertTrue("unexpected $log", log.none { it.contains("boost runway") })
+        assertTrue(log.any { it.contains("boost dip") })
+        assertEquals(-1L, p.runwayNowMs)
+    }
+
+    @Test
+    fun `with the extras on the boost is handed back one download at a time`() {
+        val p = steady(2)
+        p.play(40, 70_000, aheadPerSecondMs = -800)
+        val peak = p.downloads
+        assertTrue(peak > 3)
+        p.play(30, 300_000, aheadPerSecondMs = 2_000)
+        p.play(62, 120_000, loading = false)
+        assertEquals(peak - 1, p.downloads)
+        assertTrue(log.last().contains("one back"))
+    }
+
+    @Test
+    fun `with the extras off the boost is handed back in one step, as Arc does`() {
+        val p = steady(2, on = false)
+        p.play(40, 70_000, aheadPerSecondMs = -800)
+        val peak = p.downloads
+        assertTrue(peak > 3)
+        p.play(30, 300_000, aheadPerSecondMs = 2_000)
+        p.play(62, 120_000, loading = false)
+        assertTrue("still ${p.downloads} of $peak", p.downloads < peak - 1)
+        assertTrue(log.none { it.contains("one back") })
     }
 
     @Test

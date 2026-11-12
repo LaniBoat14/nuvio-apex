@@ -571,7 +571,7 @@ internal class AutoSpeedupPolicy(
                 if (s.nowMs - comfortableSinceMs >= COMFORTABLE_MS) {
                     comfortableSinceMs = s.nowMs
                     // One back at a time: comfortable again at the lower count before the next goes.
-                    val last = downloads - 1 <= boostBase
+                    val last = !extras || downloads - 1 <= boostBase
                     val to = if (last) boostBase else downloads - 1
                     if (last) endBoost(s.nowMs) else boostTo = to
                     change(to, s.nowMs, "comfortable after the refill" + if (last) "" else ", one back")
@@ -601,7 +601,7 @@ internal class AutoSpeedupPolicy(
      * film. Null while it holds or grows, the loader rests, or there is too little history (after a seek).
      */
     private fun runwayMs(s: Sample): Long? {
-        if (!s.playing || !s.loading || s.bufferFull) return null
+        if (!extras || !s.playing || !s.loading || s.bufferFull) return null
         val first = samples.firstOrNull { it.nowMs >= s.nowMs - RUNWAY_WINDOW_MS } ?: return null
         val span = s.nowMs - first.nowMs
         if (span < RUNWAY_MIN_SPAN_MS) return null
@@ -610,6 +610,12 @@ internal class AutoSpeedupPolicy(
         if (fell <= 0L || fell * 100L < span * RUNWAY_MIN_FALL_PERCENT) return null
         return s.aheadMs * span / fell
     }
+
+    /**
+     * Apex extras: the runway response and the one-at-a-time hand-back. Off (the default), the policy is Arc's.
+     */
+    @Volatile
+    var extras: Boolean = false
 
     /** The runway at the last sample in ms, -1 while the buffer is not falling; for the Auto row. */
     @Volatile
