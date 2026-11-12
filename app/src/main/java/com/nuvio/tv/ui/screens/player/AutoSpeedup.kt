@@ -424,7 +424,6 @@ internal object AutoSpeedup {
             firstByteMs = -1L
             firstByteSamples = 0
             val p = AutoSpeedupPolicy(limits.maxDownloads, pieceBytes, limits.smallBox)
-            p.extras = apexExtras
             p.pieceBudgetBytes = limits.pieceBudgetBytes
             p.readAheadMaxBytes = limits.readAheadMaxBytes
             val limit = hostKey?.let { HostSpeeds.limitOf(it) }
@@ -559,27 +558,12 @@ internal object AutoSpeedup {
     private const val PLAN_LOG_MS = 30_000L
 
     /** For the stats HUD: requests now, the server's budget, what one request carries and its wait. */
-    data class Hud(
-        val requests: Int,
-        val budget: Int,
-        val perRequestBps: Long,
-        val firstByteMs: Long,
-        val downloads: Int = 1,
-        val state: String = "",
-        val runwayMs: Long = -1L,
-    )
-
-    /** Apex extras (Settings, Playback, Buffer and network): off, the speed-up is Arc's engine unchanged. */
-    @Volatile
-    var apexExtras: Boolean = false
+    data class Hud(val requests: Int, val budget: Int, val perRequestBps: Long, val firstByteMs: Long)
 
     fun hud(): Hud? {
         val p = policy ?: return null
         val budget = LedgerKey.knownTotal(LedgerKey.of(url)) ?: MAX_IN_FLIGHT
-        return Hud(
-            requestsNow(), budget, p.rawRateNow() ?: p.measuredPerDownloadBps, p.waitMs(),
-            p.downloads, p.stateTag(android.os.SystemClock.elapsedRealtime()), p.runwayNowMs,
-        )
+        return Hud(requestsNow(), budget, p.rawRateNow() ?: p.measuredPerDownloadBps, p.waitMs())
     }
 
     /**
